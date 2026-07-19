@@ -22,7 +22,10 @@ app = FastAPI(title="HackVerse RAG API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://hack-verse-psi.vercel.app",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
