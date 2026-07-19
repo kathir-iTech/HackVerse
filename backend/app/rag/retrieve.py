@@ -1,23 +1,25 @@
 import os
 
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+import chromadb
 
 CHROMA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "chroma_db")
 
-_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-_db = Chroma(
-    embedding_function=_embeddings,
-    persist_directory=CHROMA_DIR,
-)
+_client = chromadb.PersistentClient(path=CHROMA_DIR)
+_collection = _client.get_collection(name="sidbi_docs")
 
 
 def retrieve(query: str, k: int = 3):
-    results = _db.similarity_search(query, k=k)
-    return [
-        {
-            "content": doc.page_content,
-            "source": doc.metadata.get("source", "unknown"),
-        }
-        for doc in results
-    ]
+    results = _collection.query(query_texts=[query], n_results=k)
+    out = []
+    for i in range(len(results["ids"][0])):
+        out.append(
+            {
+                "content": results["documents"][0][i],
+                "source": (
+                    results["metadatas"][0][i].get("source", "unknown")
+                    if results["metadatas"]
+                    else "unknown"
+                ),
+            }
+        )
+    return out

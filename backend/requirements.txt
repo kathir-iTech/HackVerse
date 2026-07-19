@@ -12,4 +12,3 @@ faster-whisper
 openai
 pandas
 numpy
-sentence-transformers

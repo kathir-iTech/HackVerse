@@ -1,9 +1,9 @@
 import os
+import uuid
 
+import chromadb
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 load_dotenv()
@@ -23,14 +23,14 @@ def ingest():
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
     chunks = splitter.split_documents(docs)
 
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    client = chromadb.PersistentClient(path=CHROMA_DIR)
+    collection = client.get_or_create_collection(name="sidbi_docs")
 
-    os.makedirs(CHROMA_DIR, exist_ok=True)
-    db = Chroma.from_documents(
-        documents=chunks,
-        embedding=embeddings,
-        persist_directory=CHROMA_DIR,
-    )
+    ids = [str(uuid.uuid4()) for _ in chunks]
+    documents = [c.page_content for c in chunks]
+    metadatas = [{"source": c.metadata.get("source", "unknown")} for c in chunks]
+
+    collection.add(documents=documents, ids=ids, metadatas=metadatas)
     print(f"Ingested {len(chunks)} chunks from {len(docs)} pages into {CHROMA_DIR}")
 
 
