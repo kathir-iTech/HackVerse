@@ -25,6 +25,8 @@ function bandColor(b: Band) {
       return "bg-yellow-100 text-yellow-800";
     case "Strong":
       return "bg-green-100 text-green-800";
+    default:
+      return "bg-slate-100 text-slate-800";
   }
 }
 
@@ -131,7 +133,7 @@ export default function Page() {
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
             <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Evidence Summary</span>
             <ul className="mt-2 space-y-1">
-              {report.evidence_summary.map((s, i) => (
+              {(report.evidence_summary ?? []).map((s, i) => (
                 <li key={i} className="text-sm text-slate-700 flex gap-2">
                   <span className="text-slate-300 mt-0.5 shrink-0">•</span>
                   <span>{s}</span>

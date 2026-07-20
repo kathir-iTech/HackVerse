@@ -38,5 +38,4 @@ Copy placeholders — the app uses `.env` files for secrets:
 ```
 # backend/.env
 OPENROUTER_API_KEY=your_key_here
-HF_TOKEN=your_token_here
 ```

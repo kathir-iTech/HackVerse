@@ -24,6 +24,10 @@ def ingest():
     chunks = splitter.split_documents(docs)
 
     client = chromadb.PersistentClient(path=CHROMA_DIR)
+    try:
+        client.delete_collection("sidbi_docs")
+    except ValueError:
+        pass
     collection = client.get_or_create_collection(name="sidbi_docs")
 
     ids = [str(uuid.uuid4()) for _ in chunks]
