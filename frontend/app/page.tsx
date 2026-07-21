@@ -163,6 +163,9 @@ export default function Page() {
       <p className="mt-1 text-sm text-slate-500">
         For field officers — upload evidence collected during a vendor visit
       </p>
+      <p className="mt-1 text-xs text-slate-400">
+        Upload at least one item below to generate a report — all three are optional individually.
+      </p>
 
       <div className="mt-8 space-y-6">
         {/* Photos */}
@@ -174,6 +177,7 @@ export default function Page() {
           <input
             type="file"
             accept="image/*"
+            capture="environment"
             multiple
             onChange={handlePhotos}
             className="mt-3 block w-full text-sm text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer"
