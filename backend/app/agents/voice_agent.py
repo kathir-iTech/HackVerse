@@ -13,7 +13,7 @@ _whisper_model = None
 def _get_whisper():
     global _whisper_model
     if _whisper_model is None:
-        _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+        _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
     return _whisper_model
 def process_voice(audio_path: str) -> dict:
     model = _get_whisper()
