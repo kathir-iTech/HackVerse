@@ -3,13 +3,12 @@ load_dotenv()
 
 import os
 import base64
-import sys
 from openai import OpenAI
 
 api_key = os.environ.get("OPENROUTER_API_KEY")
 if not api_key:
     print("ERROR: OPENROUTER_API_KEY environment variable is not set.", file=sys.stderr)
-    sys.exit(1)
+    api_key = ""
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
@@ -29,7 +28,7 @@ SUMMARY_PROMPT_PREFIX = (
 )
 
 
-def _describe_image(image_path: str) -> str:
+def _describe_image(image_path: str) -> str | None:
     with open(image_path, "rb") as f:
         image_bytes = f.read()
     b64 = base64.b64encode(image_bytes).decode("utf-8")
@@ -49,8 +48,8 @@ def _describe_image(image_path: str) -> str:
             max_tokens=300,
         )
     except Exception as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        sys.exit(1)
+        print(f"[vision_agent] _describe_image failed: {e}", file=sys.stderr)
+        return None
     return completion.choices[0].message.content
 
 
@@ -58,12 +57,18 @@ def analyze_photos(image_paths: list[str]) -> dict:
     per_image = []
     for path in image_paths:
         desc = _describe_image(path)
+        if desc is None:
+            return {"error": "vision processing failed"}
         per_image.append({"file": os.path.basename(path), "description": desc})
-    combined = "\n".join(f"- {d['description']}" for d in per_image)
-    completion = client.chat.completions.create(
-        model=TEXT_MODEL,
-        messages=[{"role": "user", "content": SUMMARY_PROMPT_PREFIX + combined}],
-        max_tokens=300,
-    )
-    summary = completion.choices[0].message.content
+    try:
+        combined = "\n".join(f"- {d['description']}" for d in per_image)
+        completion = client.chat.completions.create(
+            model=TEXT_MODEL,
+            messages=[{"role": "user", "content": SUMMARY_PROMPT_PREFIX + combined}],
+            max_tokens=300,
+        )
+        summary = completion.choices[0].message.content
+    except Exception as e:
+        print(f"[vision_agent] summary call failed: {e}", file=sys.stderr)
+        return {"error": "vision processing failed"}
     return {"per_image": per_image, "summary": summary}

@@ -10,7 +10,7 @@ load_dotenv()
 api_key = os.environ.get("OPENROUTER_API_KEY")
 if not api_key:
     print("ERROR: OPENROUTER_API_KEY environment variable is not set.", file=sys.stderr)
-    sys.exit(1)
+    api_key = ""
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
@@ -82,6 +82,7 @@ Output strict JSON with these keys:
 - evidence_summary (list of short evidence strings)
 - missing_inputs (list of strings — which of photos / voice / transactions were missing)"""
 
+    raw = None
     try:
         completion = client.chat.completions.create(
             model=MODEL,
@@ -95,7 +96,7 @@ Output strict JSON with these keys:
         cleaned = _strip_fences(raw)
         report = json.loads(cleaned)
     except Exception:
-        report = {"error": "synthesis failed", "raw_response": raw if "raw" in dir() else None}
+        report = {"error": "synthesis failed", "raw_response": raw}
 
     report["missing_inputs"] = missing
     return report
