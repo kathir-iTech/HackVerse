@@ -28,37 +28,34 @@ SUMMARY_PROMPT_PREFIX = (
 )
 
 
-def _describe_image(image_path: str) -> str | None:
+def _describe_image(image_path: str) -> str:
     with open(image_path, "rb") as f:
         image_bytes = f.read()
     b64 = base64.b64encode(image_bytes).decode("utf-8")
     data_uri = f"data:image/jpeg;base64,{b64}"
-    try:
-        completion = client.chat.completions.create(
-            model=VISION_MODEL,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": DESCRIBE_PROMPT},
-                        {"type": "image_url", "image_url": {"url": data_uri}},
-                    ],
-                }
-            ],
-            max_tokens=300,
-        )
-    except Exception as e:
-        print(f"[vision_agent] _describe_image failed: {e}", file=sys.stderr)
-        return None
+    completion = client.chat.completions.create(
+        model=VISION_MODEL,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": DESCRIBE_PROMPT},
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                ],
+            }
+        ],
+        max_tokens=300,
+    )
     return completion.choices[0].message.content
 
 
 def analyze_photos(image_paths: list[str]) -> dict:
     per_image = []
     for path in image_paths:
-        desc = _describe_image(path)
-        if desc is None:
-            return {"error": "vision processing failed"}
+        try:
+            desc = _describe_image(path)
+        except Exception as e:
+            return {"error": "vision processing failed", "detail": str(e)}
         per_image.append({"file": os.path.basename(path), "description": desc})
     try:
         combined = "\n".join(f"- {d['description']}" for d in per_image)
@@ -69,6 +66,5 @@ def analyze_photos(image_paths: list[str]) -> dict:
         )
         summary = completion.choices[0].message.content
     except Exception as e:
-        print(f"[vision_agent] summary call failed: {e}", file=sys.stderr)
-        return {"error": "vision processing failed"}
+        return {"error": "vision processing failed", "detail": str(e)}
     return {"per_image": per_image, "summary": summary}

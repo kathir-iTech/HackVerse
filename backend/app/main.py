@@ -172,6 +172,9 @@ async def report(
     )
     timings["synthesis"] = round(time.time() - t0, 2)
 
+    if "error" in report_data:
+        input_errors.append("synthesis: " + report_data["error"] + (" - " + report_data.get("detail", "") if report_data.get("detail") else ""))
+
     report_data["missing_inputs"] = missing
     report_data["input_errors"] = input_errors
     report_data["_timings"] = timings

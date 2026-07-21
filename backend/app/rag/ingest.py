@@ -32,7 +32,7 @@ def ingest():
 
     ids = [str(uuid.uuid4()) for _ in chunks]
     documents = [c.page_content for c in chunks]
-    metadatas = [{"source": c.metadata.get("source", "unknown")} for c in chunks]
+    metadatas = [{"source": os.path.basename(c.metadata.get("source", "unknown"))} for c in chunks]
 
     collection.add(documents=documents, ids=ids, metadatas=metadatas)
     print(f"Ingested {len(chunks)} chunks from {len(docs)} pages into {CHROMA_DIR}")

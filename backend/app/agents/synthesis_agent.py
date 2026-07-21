@@ -1,6 +1,5 @@
 import json
 import os
-import sys
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -95,8 +94,8 @@ Output strict JSON with these keys:
         raw = completion.choices[0].message.content
         cleaned = _strip_fences(raw)
         report = json.loads(cleaned)
-    except Exception:
-        report = {"error": "synthesis failed", "raw_response": raw}
+    except Exception as e:
+        report = {"error": "synthesis failed", "detail": str(e), "raw_response": raw}
 
     report["missing_inputs"] = missing
     return report
