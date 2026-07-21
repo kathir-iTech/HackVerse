@@ -1,8 +1,10 @@
 import asyncio
+import json
 import os
 import shutil
 import tempfile
 import time
+import uuid
 from typing import List
 
 from dotenv import load_dotenv
@@ -19,6 +21,8 @@ from app.agents.transaction_agent import analyze_transactions
 from app.agents.synthesis_agent import synthesize_report
 
 app = FastAPI(title="HackVerse RAG API")
+
+REPORT_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "report_cache")
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,6 +42,16 @@ class QueryRequest(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/reports/{report_id}")
+def get_report(report_id: str):
+    cache_path = os.path.join(REPORT_CACHE_DIR, f"{report_id}.json")
+    if not os.path.isfile(cache_path):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "report not found"})
+    with open(cache_path) as f:
+        return json.load(f)
 
 
 @app.post("/rag/query")
@@ -78,7 +92,6 @@ async def _run_agent(
     files_data: list | None,
     single_file: bool,
     handler,
-    timings: dict,
 ):
     if files_data is None:
         return None
@@ -104,7 +117,8 @@ async def _run_agent(
     finally:
         for p in paths:
             os.remove(p)
-        timings[label] = round(time.time() - t0, 2)
+        elapsed = round(time.time() - t0, 2)
+        print(f"[timing] {label} took {elapsed}s", flush=True)
 
 
 @app.post("/report")
@@ -118,13 +132,13 @@ async def report(
     coros = []
     mapping = []
     if photos is not None:
-        coros.append(_run_agent("vision", photos, False, analyze_photos, timings))
+        coros.append(_run_agent("vision", photos, False, analyze_photos))
         mapping.append("vision")
     if audio is not None:
-        coros.append(_run_agent("voice", audio, True, process_voice, timings))
+        coros.append(_run_agent("voice", audio, True, process_voice))
         mapping.append("voice")
     if transactions is not None:
-        coros.append(_run_agent("transactions", transactions, True, analyze_transactions, timings))
+        coros.append(_run_agent("transactions", transactions, True, analyze_transactions))
         mapping.append("transactions")
 
     gathered = await asyncio.gather(*coros) if coros else []
@@ -176,4 +190,15 @@ async def report(
     report_data["_timings"] = timings
 
     print(f"[timings] {timings}", flush=True)
+
+    report_id = str(uuid.uuid4())
+    os.makedirs(REPORT_CACHE_DIR, exist_ok=True)
+    cache_path = os.path.join(REPORT_CACHE_DIR, f"{report_id}.json")
+    report_data["report_id"] = report_id
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(report_data, f)
+    except Exception:
+        pass
+
     return report_data

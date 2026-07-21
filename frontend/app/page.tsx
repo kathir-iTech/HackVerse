@@ -16,7 +16,26 @@ interface Report {
   evidence_summary: string[];
   missing_inputs: string[];
   discrepancy_flags: string[];
+  source_agreement: Record<string, string>;
 }
+
+const AGREEMENT_COLORS: Record<string, string> = {
+  agree: "bg-green-100 text-green-700 border-green-300",
+  conflict: "bg-amber-100 text-amber-700 border-amber-300",
+  insufficient_data: "bg-slate-50 text-slate-400 border-slate-200",
+};
+
+const AGREEMENT_LABELS: Record<string, string> = {
+  agree: "✓ Agree",
+  conflict: "✗ Conflict",
+  insufficient_data: "— No Data",
+};
+
+const PAIR_LABELS: Record<string, string> = {
+  photo_voice: "Photo ⇄ Voice",
+  photo_transactions: "Photo ⇄ Transactions",
+  voice_transactions: "Voice ⇄ Transactions",
+};
 
 function bandColor(b: Band) {
   switch (b) {
@@ -123,6 +142,66 @@ export default function Page() {
             <span className="text-xs font-medium text-indigo-500 uppercase tracking-wide">Assessment</span>
             <p className="mt-1 text-lg font-semibold text-indigo-900">{report.assessment_band}</p>
           </div>
+
+          {/* Cross-verification matrix */}
+          {report.source_agreement && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 px-5 pt-5 pb-3">
+              <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Cross-Verification</span>
+              <div className="mt-3 flex flex-col items-center select-none">
+                {/* Top row: Photo ── connector ── Voice */}
+                <div className="flex items-center gap-0 w-full max-w-xs">
+                  <div className="flex-1 text-center">
+                    <div className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700">
+                      <span className="text-base">📷</span> Photo
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 px-1">
+                    <div className={`w-10 h-0.5 ${report.source_agreement.photo_voice === "agree" ? "bg-green-400" : report.source_agreement.photo_voice === "conflict" ? "bg-amber-400" : "bg-slate-200"}`} />
+                    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${AGREEMENT_COLORS[report.source_agreement.photo_voice || "insufficient_data"] || AGREEMENT_COLORS.insufficient_data}`}>
+                      {report.source_agreement.photo_voice === "agree" ? "✓" : report.source_agreement.photo_voice === "conflict" ? "⚠" : "—"}
+                    </span>
+                    <div className={`w-10 h-0.5 ${report.source_agreement.photo_voice === "agree" ? "bg-green-400" : report.source_agreement.photo_voice === "conflict" ? "bg-amber-400" : "bg-slate-200"}`} />
+                  </div>
+                  <div className="flex-1 text-center">
+                    <div className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700">
+                      <span className="text-base">🎙️</span> Voice
+                    </div>
+                  </div>
+                </div>
+
+                {/* Vertical connectors */}
+                <div className="flex justify-between w-full max-w-xs h-6">
+                  <div className="flex flex-col items-center w-1/3">
+                    <div className={`w-0.5 h-3 ${report.source_agreement.photo_transactions === "agree" ? "bg-green-400" : report.source_agreement.photo_transactions === "conflict" ? "bg-amber-400" : "bg-slate-200"}`} />
+                  </div>
+                  <div className="flex flex-col items-center w-1/3">
+                    <div className={`w-0.5 h-3 ${report.source_agreement.voice_transactions === "agree" ? "bg-green-400" : report.source_agreement.voice_transactions === "conflict" ? "bg-amber-400" : "bg-slate-200"}`} />
+                  </div>
+                </div>
+
+                {/* Between verticals: status pills */}
+                <div className="flex justify-between w-full max-w-xs -mt-0.5">
+                  <div className="flex justify-center w-1/3">
+                    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${AGREEMENT_COLORS[report.source_agreement.photo_transactions || "insufficient_data"] || AGREEMENT_COLORS.insufficient_data}`}>
+                      {report.source_agreement.photo_transactions === "agree" ? "✓" : report.source_agreement.photo_transactions === "conflict" ? "⚠" : "—"}
+                    </span>
+                  </div>
+                  <div className="flex justify-center w-1/3">
+                    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${AGREEMENT_COLORS[report.source_agreement.voice_transactions || "insufficient_data"] || AGREEMENT_COLORS.insufficient_data}`}>
+                      {report.source_agreement.voice_transactions === "agree" ? "✓" : report.source_agreement.voice_transactions === "conflict" ? "⚠" : "—"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Bottom row: Transactions (centered, span both) */}
+                <div className="mt-1 flex justify-center w-full max-w-xs">
+                  <div className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700">
+                    <span className="text-base">💰</span> Transactions
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Discrepancy flags */}
           {report.discrepancy_flags && report.discrepancy_flags.length > 0 && (

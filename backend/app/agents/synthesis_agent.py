@@ -35,7 +35,30 @@ Rules:
 - If the voice note or other evidence states a business tenure (e.g. 'X months/years operating')
   that is inconsistent with the actual transaction date span provided above, this MUST be flagged
   in discrepancy_flags. Compare the stated tenure against the actual number of days explicitly,
-  not just qualitatively."""
+  not just qualitatively.
+- For the source_agreement field, assess each pair of evidence sources independently:
+  - photo_voice: Does what's visible in the photos (inventory level, shop activity) plausibly match
+    what the business owner claimed in the voice note (business type, scale, products)?
+  - photo_transactions: Does the apparent business scale from photos plausibly match the transaction
+    volumes and patterns? E.g. a shop showing minimal inventory but high transaction inflows is a conflict.
+  - voice_transactions: Does the tenure and business description from the voice note align with the
+    transaction date range, volumes, and trends?
+  If either source in a pair is missing, use "insufficient_data". Otherwise choose "agree" or "conflict"
+  based on clear inconsistency — if you're uncertain, prefer "agree"."""
+
+<｜｜DSML｜｜parameter name="newString" string="true">- If the voice note or other evidence states a business tenure (e.g. 'X months/years operating')
+  that is inconsistent with the actual transaction date span provided above, this MUST be flagged
+  in discrepancy_flags. Compare the stated tenure against the actual number of days explicitly,
+  not just qualitatively.
+- For the source_agreement field, assess each pair of evidence sources independently:
+  - photo_voice: Does what's visible in the photos (inventory level, shop activity) plausibly match
+    what the business owner claimed in the voice note (business type, scale, products)?
+  - photo_transactions: Does the apparent business scale from photos plausibly match the transaction
+    volumes and patterns? E.g. a shop showing minimal inventory but high transaction inflows is a conflict.
+  - voice_transactions: Does the tenure and business description from the voice note align with the
+    transaction date range, volumes, and trends?
+  If either source in a pair is missing, use "insufficient_data". Otherwise choose "agree" or "conflict"
+  based on clear inconsistency — if you're uncertain, prefer "agree"."""
 
 
 def _strip_fences(raw: str) -> str:
@@ -95,7 +118,8 @@ Output strict JSON with these keys:
 - assessment_band ("Further assessment required" / "Suitable for micro-loan assessment" / "Suitable for higher assessment range")
 - evidence_summary (list of short evidence strings)
 - missing_inputs (list of strings — which of photos / voice / transactions were missing)
-- discrepancy_flags (list of strings — each describing one cross-source contradiction found, or empty list if none)"""
+- discrepancy_flags (list of strings — each describing one cross-source contradiction found, or empty list if none)
+- source_agreement (object with keys photo_voice, photo_transactions, voice_transactions — each valued "agree" / "conflict" / "insufficient_data")"""
 
     raw = None
     try:
@@ -116,4 +140,25 @@ Output strict JSON with these keys:
     report["missing_inputs"] = missing
     if "discrepancy_flags" not in report:
         report["discrepancy_flags"] = []
+
+    DEFAULT_AGREEMENT = {"photo_voice": "insufficient_data", "photo_transactions": "insufficient_data", "voice_transactions": "insufficient_data"}
+    if "source_agreement" not in report or not isinstance(report["source_agreement"], dict):
+        report["source_agreement"] = dict(DEFAULT_AGREEMENT)
+    else:
+        for k in ("photo_voice", "photo_transactions", "voice_transactions"):
+            if report["source_agreement"].get(k) not in ("agree", "conflict", "insufficient_data"):
+                report["source_agreement"][k] = "insufficient_data"
+
+    if "error" not in report:
+        BAND_VALUES = {"Low", "Moderate", "Strong"}
+        ASSESSMENT_VALUES = {
+            "Further assessment required",
+            "Suitable for micro-loan assessment",
+            "Suitable for higher assessment range",
+        }
+        for key in ("revenue_consistency_band", "inventory_observation_band", "digital_activity_band"):
+            if report.get(key) not in BAND_VALUES:
+                report[key] = "Further assessment required"
+        if report.get("assessment_band") not in ASSESSMENT_VALUES:
+            report["assessment_band"] = "Further assessment required"
     return report
