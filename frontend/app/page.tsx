@@ -15,6 +15,7 @@ interface Report {
   assessment_band: string;
   evidence_summary: string[];
   missing_inputs: string[];
+  discrepancy_flags: string[];
 }
 
 function bandColor(b: Band) {
@@ -122,6 +123,21 @@ export default function Page() {
             <span className="text-xs font-medium text-indigo-500 uppercase tracking-wide">Assessment</span>
             <p className="mt-1 text-lg font-semibold text-indigo-900">{report.assessment_band}</p>
           </div>
+
+          {/* Discrepancy flags */}
+          {report.discrepancy_flags && report.discrepancy_flags.length > 0 && (
+            <div className="bg-amber-50 rounded-xl border border-amber-200 p-5">
+              <span className="text-xs font-medium text-amber-700 uppercase tracking-wide">Needs Officer Review</span>
+              <ul className="mt-2 space-y-1">
+                {report.discrepancy_flags.map((s, i) => (
+                  <li key={i} className="text-sm text-amber-800 flex gap-2">
+                    <span className="text-amber-400 mt-0.5 shrink-0">•</span>
+                    <span>{s}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Scheme note */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">

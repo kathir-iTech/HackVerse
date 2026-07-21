@@ -130,10 +130,20 @@ def analyze_transactions(csv_path: str) -> dict:
     transaction_count = int(len(df))
     avg_txn = round(float(df["amount"].mean()), 2)
 
-    # daily net amounts for volatility
+    # compute date range
     try:
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         df = df.dropna(subset=["date"])
+        earliest_date = df["date"].min().strftime("%Y-%m-%d")
+        latest_date = df["date"].max().strftime("%Y-%m-%d")
+        date_range_days = (df["date"].max() - df["date"].min()).days
+    except Exception:
+        earliest_date = None
+        latest_date = None
+        date_range_days = None
+
+    # daily net amounts for volatility
+    try:
         daily = df.copy()
         if "type" in df.columns:
             daily["net"] = np.where(type_col.isin({"credit", "cr", "inflow", "deposit"}), daily["amount"], -daily["amount"])
@@ -181,6 +191,9 @@ def analyze_transactions(csv_path: str) -> dict:
         "average_transaction": avg_txn,
         "volatility": volatility,
         "trend": trend,
+        "earliest_date": earliest_date,
+        "latest_date": latest_date,
+        "date_range_days": date_range_days,
     }
     if assumptions:
         result["assumptions"] = assumptions

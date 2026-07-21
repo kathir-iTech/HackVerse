@@ -115,20 +115,16 @@ async def report(
 ):
     timings = {}
 
-    vision_coro = _run_agent("vision", photos, False, analyze_photos, timings)
-    voice_coro = _run_agent("voice", audio, True, process_voice, timings)
-    txn_coro = _run_agent("transactions", transactions, True, analyze_transactions, timings)
-
     coros = []
     mapping = []
     if photos is not None:
-        coros.append(vision_coro)
+        coros.append(_run_agent("vision", photos, False, analyze_photos, timings))
         mapping.append("vision")
     if audio is not None:
-        coros.append(voice_coro)
+        coros.append(_run_agent("voice", audio, True, process_voice, timings))
         mapping.append("voice")
     if transactions is not None:
-        coros.append(txn_coro)
+        coros.append(_run_agent("transactions", transactions, True, analyze_transactions, timings))
         mapping.append("transactions")
 
     gathered = await asyncio.gather(*coros) if coros else []

@@ -23,7 +23,19 @@ Rules:
 - Do not invent numeric scores or currency amounts.
 - Base bands only on the evidence provided.
 - If evidence is thin or missing, favor "Further assessment required".
-- Output ONLY valid JSON with no markdown fences or extra text."""
+- Output ONLY valid JSON with no markdown fences or extra text.
+- Actively cross-check the evidence sources against each other for contradictions.
+  Look specifically for: (1) stock/inventory levels visible in photos vs sales volume implied by transactions,
+  (2) business tenure claimed in the voice note vs the actual time span covered by transaction data,
+  (3) revenue level vs digital activity level plausibility,
+  (4) any other factual inconsistency between what was said, shown, and recorded.
+  For each contradiction found, phrase it as a neutral observation for the officer to verify,
+  never as an accusation. If no evidence conflicts, or if there isn't enough evidence to
+  cross-check (e.g. only one source provided), return an empty list.
+- If the voice note or other evidence states a business tenure (e.g. 'X months/years operating')
+  that is inconsistent with the actual transaction date span provided above, this MUST be flagged
+  in discrepancy_flags. Compare the stated tenure against the actual number of days explicitly,
+  not just qualitatively."""
 
 
 def _strip_fences(raw: str) -> str:
@@ -61,7 +73,10 @@ def synthesize_report(
         missing.append("transactions")
         evidence_parts.append("[transactions: missing]")
     else:
-        evidence_parts.append(f"[transactions: {json.dumps(transaction_result)}]")
+        txn_date_info = ""
+        if transaction_result.get("date_range_days") is not None:
+            txn_date_info = f" [Transaction records span {transaction_result['date_range_days']} days (from {transaction_result.get('earliest_date', '?')} to {transaction_result.get('latest_date', '?')}).]"
+        evidence_parts.append(f"[transactions: {json.dumps(transaction_result)}{txn_date_info}]")
 
     rag_block = "\n".join(c["content"] for c in rag_context) if rag_context else "[no RAG context retrieved]"
 
@@ -79,7 +94,8 @@ Output strict JSON with these keys:
 - relevant_scheme_note (one sentence referencing the RAG context)
 - assessment_band ("Further assessment required" / "Suitable for micro-loan assessment" / "Suitable for higher assessment range")
 - evidence_summary (list of short evidence strings)
-- missing_inputs (list of strings — which of photos / voice / transactions were missing)"""
+- missing_inputs (list of strings — which of photos / voice / transactions were missing)
+- discrepancy_flags (list of strings — each describing one cross-source contradiction found, or empty list if none)"""
 
     raw = None
     try:
@@ -98,4 +114,6 @@ Output strict JSON with these keys:
         report = {"error": "synthesis failed", "detail": str(e), "raw_response": raw}
 
     report["missing_inputs"] = missing
+    if "discrepancy_flags" not in report:
+        report["discrepancy_flags"] = []
     return report
