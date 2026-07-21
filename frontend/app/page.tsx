@@ -177,7 +177,6 @@ export default function Page() {
           <input
             type="file"
             accept="image/*"
-            capture="environment"
             multiple
             onChange={handlePhotos}
             className="mt-3 block w-full text-sm text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer"
