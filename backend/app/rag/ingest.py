@@ -26,7 +26,7 @@ def ingest():
     client = chromadb.PersistentClient(path=CHROMA_DIR)
     try:
         client.delete_collection("sidbi_docs")
-    except ValueError:
+    except Exception:
         pass
     collection = client.get_or_create_collection(name="sidbi_docs")
 
