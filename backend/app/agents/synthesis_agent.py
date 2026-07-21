@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -33,20 +34,6 @@ Rules:
   never as an accusation. If no evidence conflicts, or if there isn't enough evidence to
   cross-check (e.g. only one source provided), return an empty list.
 - If the voice note or other evidence states a business tenure (e.g. 'X months/years operating')
-  that is inconsistent with the actual transaction date span provided above, this MUST be flagged
-  in discrepancy_flags. Compare the stated tenure against the actual number of days explicitly,
-  not just qualitatively.
-- For the source_agreement field, assess each pair of evidence sources independently:
-  - photo_voice: Does what's visible in the photos (inventory level, shop activity) plausibly match
-    what the business owner claimed in the voice note (business type, scale, products)?
-  - photo_transactions: Does the apparent business scale from photos plausibly match the transaction
-    volumes and patterns? E.g. a shop showing minimal inventory but high transaction inflows is a conflict.
-  - voice_transactions: Does the tenure and business description from the voice note align with the
-    transaction date range, volumes, and trends?
-  If either source in a pair is missing, use "insufficient_data". Otherwise choose "agree" or "conflict"
-  based on clear inconsistency — if you're uncertain, prefer "agree"."""
-
-<｜｜DSML｜｜parameter name="newString" string="true">- If the voice note or other evidence states a business tenure (e.g. 'X months/years operating')
   that is inconsistent with the actual transaction date span provided above, this MUST be flagged
   in discrepancy_flags. Compare the stated tenure against the actual number of days explicitly,
   not just qualitatively.
