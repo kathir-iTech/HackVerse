@@ -129,7 +129,8 @@ export default function Page() {
       <main className="max-w-2xl mx-auto px-4 py-10">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Business Readiness Report</h1>
+            <h1 className="text-2xl font-bold text-slate-900">Theligai</h1>
+            <p className="text-xs text-slate-400">Business Readiness Report for MSME Field Assessment</p>
             {report.report_id && (
               <p className="mt-0.5 text-[11px] font-mono text-slate-400">ID {report.report_id}</p>
             )}
@@ -322,8 +323,9 @@ export default function Page() {
 
   return (
     <main className="max-w-xl mx-auto px-4 py-10">
-      <h1 className="text-2xl font-bold text-slate-900">Business Readiness Report</h1>
-      <p className="mt-1 text-sm text-slate-500">
+      <h1 className="text-2xl font-bold text-slate-900">Theligai</h1>
+      <p className="text-xs text-slate-400">Business Readiness Report for MSME Field Assessment</p>
+      <p className="mt-3 text-sm text-slate-500">
         For field officers — upload evidence collected during a vendor visit
       </p>
       <p className="mt-1 text-xs text-slate-400">

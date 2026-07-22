@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Business Readiness Report",
-  description: "MSME field assessment tool",
+  title: "Theligai — Business Readiness Report",
+  description: "MSME field assessment tool for microfinance officers",
 };
 
 export default function RootLayout({
