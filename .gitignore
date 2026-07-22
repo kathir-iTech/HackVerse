@@ -31,3 +31,6 @@ uvicorn_log.txt
 
 # Generated reports
 results.txt
+
+# Report cache
+backend/report_cache/
