@@ -189,6 +189,21 @@ async def report(
     report_data["input_errors"] = input_errors
     report_data["_timings"] = timings
 
+    if transaction_result and "error" not in transaction_result:
+        TXN_FIELDS = ["total_inflow", "total_outflow", "transaction_count", "average_transaction", "volatility", "trend", "date_range_days", "earliest_date", "latest_date"]
+        for f in TXN_FIELDS:
+            if f in transaction_result:
+                report_data[f] = transaction_result[f]
+
+    seen = set()
+    sources_cited = []
+    for r in rag_context:
+        src = r.get("source", "")
+        if src and src not in seen:
+            seen.add(src)
+            sources_cited.append(src)
+    report_data["sources_cited"] = sources_cited
+
     print(f"[timings] {timings}", flush=True)
 
     report_id = str(uuid.uuid4())

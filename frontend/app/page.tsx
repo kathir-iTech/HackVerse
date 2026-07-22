@@ -17,6 +17,17 @@ interface Report {
   missing_inputs: string[];
   discrepancy_flags: string[];
   source_agreement: Record<string, string>;
+  report_id?: string;
+  sources_cited?: string[];
+  total_inflow?: number;
+  total_outflow?: number;
+  transaction_count?: number;
+  average_transaction?: number;
+  volatility?: string;
+  trend?: string;
+  date_range_days?: number;
+  earliest_date?: string;
+  latest_date?: string;
 }
 
 const AGREEMENT_COLORS: Record<string, string> = {
@@ -40,21 +51,21 @@ const PAIR_LABELS: Record<string, string> = {
 function bandColor(b: Band) {
   switch (b) {
     case "Low":
-      return "bg-red-100 text-red-800";
+      return "text-red-700 bg-red-50 border-red-200";
     case "Moderate":
-      return "bg-yellow-100 text-yellow-800";
+      return "text-amber-700 bg-amber-50 border-amber-200";
     case "Strong":
-      return "bg-green-100 text-green-800";
+      return "text-emerald-700 bg-emerald-50 border-emerald-200";
     default:
-      return "bg-slate-100 text-slate-800";
+      return "text-slate-600 bg-slate-50 border-slate-200";
   }
 }
 
-function BandPill({ label, value }: { label: string; value: Band }) {
+function BandTag({ label, value }: { label: string; value: Band }) {
   return (
-    <div className="flex items-center justify-between py-3">
-      <span className="text-sm font-medium text-slate-700">{label}</span>
-      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${bandColor(value)}`}>
+    <div className="flex items-center justify-between py-2.5">
+      <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">{label}</span>
+      <span className={`px-2.5 py-0.5 text-[11px] font-semibold border rounded ${bandColor(value)}`}>
         {value}
       </span>
     </div>
@@ -112,10 +123,17 @@ export default function Page() {
   }, []);
 
   if (screen === "report" && report) {
+    const hasFinancial = report.transaction_count !== undefined;
+
     return (
       <main className="max-w-2xl mx-auto px-4 py-10">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold text-slate-900">Business Readiness Report</h1>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Business Readiness Report</h1>
+            {report.report_id && (
+              <p className="mt-0.5 text-[11px] font-mono text-slate-400">ID {report.report_id}</p>
+            )}
+          </div>
           <button onClick={reset} className="text-sm text-slate-500 hover:text-slate-700 underline">
             New Report
           </button>
@@ -132,9 +150,9 @@ export default function Page() {
 
           {/* Band rows */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 divide-y divide-slate-100">
-            <BandPill label="Revenue Consistency" value={report.revenue_consistency_band} />
-            <BandPill label="Inventory Observation" value={report.inventory_observation_band} />
-            <BandPill label="Digital Activity" value={report.digital_activity_band} />
+            <BandTag label="Revenue Consistency" value={report.revenue_consistency_band} />
+            <BandTag label="Inventory Observation" value={report.inventory_observation_band} />
+            <BandTag label="Digital Activity" value={report.digital_activity_band} />
           </div>
 
           {/* Assessment band */}
@@ -142,6 +160,46 @@ export default function Page() {
             <span className="text-xs font-medium text-indigo-500 uppercase tracking-wide">Assessment</span>
             <p className="mt-1 text-lg font-semibold text-indigo-900">{report.assessment_band}</p>
           </div>
+
+          {/* Financial Evidence card */}
+          {hasFinancial && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+              <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Financial Evidence</span>
+              <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Total Inflow</span>
+                  <span className="font-semibold text-slate-800">₹{report.total_inflow?.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Total Outflow</span>
+                  <span className="font-semibold text-slate-800">₹{report.total_outflow?.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Transactions</span>
+                  <span className="font-semibold text-slate-800">{report.transaction_count?.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Avg Transaction</span>
+                  <span className="font-semibold text-slate-800">₹{report.average_transaction?.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Volatility</span>
+                  <span className="font-semibold text-slate-800">{report.volatility ?? "—"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Trend</span>
+                  <span className="font-semibold text-slate-800">{report.trend ?? "—"}</span>
+                </div>
+                <div className="flex justify-between col-span-2">
+                  <span className="text-slate-500">Date Range</span>
+                  <span className="font-semibold text-slate-800">
+                    {report.earliest_date ?? "—"} &ndash; {report.latest_date ?? "—"}
+                    {report.date_range_days != null && <span className="font-normal text-slate-400"> ({report.date_range_days} days)</span>}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Cross-verification matrix */}
           {report.source_agreement && (
@@ -218,10 +276,15 @@ export default function Page() {
             </div>
           )}
 
-          {/* Scheme note */}
+          {/* Scheme note + Sources Referenced */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
             <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Scheme Note</span>
             <p className="mt-2 text-sm text-slate-700 leading-relaxed">{report.relevant_scheme_note}</p>
+            {report.sources_cited && report.sources_cited.length > 0 && (
+              <p className="mt-3 text-[11px] text-slate-400">
+                Sources referenced: {report.sources_cited.join(", ")}
+              </p>
+            )}
           </div>
 
           {/* Evidence summary */}
@@ -247,6 +310,11 @@ export default function Page() {
               were provided for this assessment.
             </div>
           )}
+
+          {/* Footer */}
+          <p className="text-[11px] text-slate-300 text-center">
+            This report was generated by an AI pipeline. All outputs should be verified by a field officer before decision-making.
+          </p>
         </div>
       </main>
     );
