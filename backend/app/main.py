@@ -1,10 +1,12 @@
 import asyncio
+import glob
 import json
 import os
 import shutil
 import tempfile
 import time
 import uuid
+from datetime import datetime
 from typing import List
 
 from dotenv import load_dotenv
@@ -42,6 +44,31 @@ class QueryRequest(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/reports")
+def list_reports():
+    import glob
+    files = sorted(
+        glob.glob(os.path.join(REPORT_CACHE_DIR, "*.json")),
+        key=os.path.getmtime,
+        reverse=True,
+    )
+    entries = []
+    for fpath in files:
+        try:
+            with open(fpath) as f:
+                data = json.load(f)
+            mtime = os.path.getmtime(fpath)
+            entries.append({
+                "report_id": data.get("report_id"),
+                "business_type": data.get("business_type"),
+                "assessment_band": data.get("assessment_band"),
+                "generated_at": datetime.fromtimestamp(mtime).isoformat(),
+            })
+        except Exception:
+            continue
+    return entries
 
 
 @app.get("/reports/{report_id}")

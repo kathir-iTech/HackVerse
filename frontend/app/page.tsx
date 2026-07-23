@@ -3,6 +3,14 @@
 import { useCallback, useRef, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001/report";
+const API_BASE = API.replace(/\/report$/, "");
+
+interface ReportSummary {
+  report_id: string;
+  business_type: string | null;
+  assessment_band: string;
+  generated_at: string;
+}
 
 type Band = "Low" | "Moderate" | "Strong";
 
@@ -73,13 +81,15 @@ function BandTag({ label, value }: { label: string; value: Band }) {
 }
 
 export default function Page() {
-  const [screen, setScreen] = useState<"upload" | "report">("upload");
+  const [screen, setScreen] = useState<"upload" | "report" | "history">("upload");
   const [photos, setPhotos] = useState<File[]>([]);
   const [audio, setAudio] = useState<File | null>(null);
   const [csv, setCsv] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reports, setReports] = useState<ReportSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const audioRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
@@ -112,6 +122,38 @@ export default function Page() {
       setLoading(false);
     }
   }, [photos, audio, csv]);
+
+  const fetchReports = useCallback(async () => {
+    setHistoryLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(API_BASE + "/reports");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: ReportSummary[] = await res.json();
+      setReports(data);
+      setScreen("history");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load history");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  const viewReport = useCallback(async (id: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(API_BASE + "/reports/" + id);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: Report = await res.json();
+      setReport(data);
+      setScreen("report");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load report");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   const reset = useCallback(() => {
     setScreen("upload");
@@ -321,6 +363,57 @@ export default function Page() {
     );
   }
 
+  if (screen === "history") {
+    return (
+      <main className="max-w-2xl mx-auto px-4 py-10">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Theligai</h1>
+            <p className="text-xs text-slate-400">Business Readiness Report for MSME Field Assessment</p>
+          </div>
+          <button onClick={() => setScreen("upload")} className="text-sm text-slate-500 hover:text-slate-700 underline">
+            Back
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          {historyLoading ? (
+            <div className="flex items-center justify-center gap-2 py-20 text-sm text-slate-500">
+              <span className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+              <span>Loading reports…</span>
+            </div>
+          ) : reports.length === 0 ? (
+            <div className="text-center py-20 text-sm text-slate-400">No past assessments found.</div>
+          ) : (
+            reports.map((r) => (
+              <div key={r.report_id} className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-900 truncate">{r.business_type ?? "Not specified"}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">{new Date(r.generated_at).toLocaleDateString()} at {new Date(r.generated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className={`px-2.5 py-0.5 text-[11px] font-semibold border rounded ${bandColor(r.assessment_band as Band)}`}>
+                    {r.assessment_band}
+                  </span>
+                  <button onClick={() => viewReport(r.report_id)} className="text-xs font-medium text-indigo-600 hover:text-indigo-800 underline underline-offset-2">
+                    View Full Report
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+          {error && screen === "history" && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">{error}</div>
+          )}
+        </div>
+
+        <p className="mt-8 text-[11px] text-slate-300 text-center">
+          Demo mode — showing all assessments. Production version would restrict this to the logged-in officer&apos;s own history.
+        </p>
+      </main>
+    );
+  }
+
   return (
     <main className="max-w-xl mx-auto px-4 py-10">
       <h1 className="text-2xl font-bold text-slate-900">Theligai</h1>
@@ -451,6 +544,10 @@ export default function Page() {
             </button>
           </div>
         )}
+
+        <button onClick={fetchReports} className="w-full text-center text-sm text-slate-400 hover:text-slate-600 underline underline-offset-2">
+          View Past Assessments
+        </button>
       </div>
     </main>
   );
