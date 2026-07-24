@@ -18,7 +18,10 @@ def _get_whisper():
 def process_voice(audio_path: str) -> dict:
     model = _get_whisper()
     t0 = time.time()
-    segments, _ = model.transcribe(audio_path)
+    try:
+        segments, _ = model.transcribe(audio_path)
+    except Exception as e:
+        return {"error": "voice processing failed", "detail": str(e)}
     t1 = time.time()
     print(f"[voice_agent] whisper transcribe took {t1 - t0:.2f}s", flush=True)
     transcript = " ".join(seg.text.strip() for seg in segments)
@@ -29,11 +32,14 @@ def process_voice(audio_path: str) -> dict:
         "keys business_type, products, years_operating, location. Omit a "
         "key entirely if not mentioned.\n\nTranscript:\n" + transcript
     )
-    completion = or_client.chat.completions.create(
-        model=TEXT_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=300,
-    )
+    try:
+        completion = or_client.chat.completions.create(
+            model=TEXT_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+        )
+    except Exception as e:
+        return {"error": "voice processing failed", "detail": str(e)}
     t2 = time.time()
     print(f"[voice_agent] openrouter extraction took {t2 - t1:.2f}s", flush=True)
     raw = completion.choices[0].message.content
