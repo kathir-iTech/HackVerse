@@ -85,7 +85,12 @@ export default function Page() {
   const [photos, setPhotos] = useState<File[]>([]);
   const [audio, setAudio] = useState<File | null>(null);
   const [csv, setCsv] = useState<File | null>(null);
+  const [precomputedVision, setPrecomputedVision] = useState<any>(null);
+  const [precomputedVoice, setPrecomputedVoice] = useState<any>(null);
+  const [precomputedVisionLoading, setPrecomputedVisionLoading] = useState(false);
+  const [precomputedVoiceLoading, setPrecomputedVoiceLoading] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingPhase, setLoadingPhase] = useState<"finishing" | "generating">("generating");
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reports, setReports] = useState<ReportSummary[]>([]);
@@ -93,26 +98,93 @@ export default function Page() {
 
   const audioRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
+  const precomputedVisionLoadingRef = useRef(false);
+  const precomputedVoiceLoadingRef = useRef(false);
+  const precomputedVisionRef = useRef<any>(null);
+  const precomputedVoiceRef = useRef<any>(null);
 
   const canSubmit = photos.length > 0 || audio !== null || csv !== null;
 
-  const handlePhotos = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setPhotos(Array.from(e.target.files ?? []));
+  const handlePhotos = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    setPhotos(files);
+    if (files.length === 0) {
+      setPrecomputedVision(null);
+      precomputedVisionRef.current = null;
+      return;
+    }
+    setPrecomputedVisionLoading(true);
+    precomputedVisionLoadingRef.current = true;
+    const fd = new FormData();
+    files.forEach(f => fd.append("files", f));
+    try {
+      const res = await fetch(API_BASE + "/agents/vision", { method: "POST", body: fd });
+      const data = await res.json();
+      setPrecomputedVision(data);
+      precomputedVisionRef.current = data;
+    } catch {
+      setPrecomputedVision(null);
+      precomputedVisionRef.current = null;
+    } finally {
+      setPrecomputedVisionLoading(false);
+      precomputedVisionLoadingRef.current = false;
+    }
+  }, []);
+
+  const handleAudio = useCallback(async (file: File | null) => {
+    setAudio(file);
+    if (!file) {
+      setPrecomputedVoice(null);
+      precomputedVoiceRef.current = null;
+      return;
+    }
+    setPrecomputedVoiceLoading(true);
+    precomputedVoiceLoadingRef.current = true;
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const res = await fetch(API_BASE + "/agents/voice", { method: "POST", body: fd });
+      const data = await res.json();
+      setPrecomputedVoice(data);
+      precomputedVoiceRef.current = data;
+    } catch {
+      setPrecomputedVoice(null);
+      precomputedVoiceRef.current = null;
+    } finally {
+      setPrecomputedVoiceLoading(false);
+      precomputedVoiceLoadingRef.current = false;
+    }
   }, []);
 
   const handleSubmit = useCallback(async () => {
+    if (precomputedVisionLoadingRef.current || precomputedVoiceLoadingRef.current) {
+      setLoading(true);
+      setLoadingPhase("finishing");
+      while (precomputedVisionLoadingRef.current || precomputedVoiceLoadingRef.current) {
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
     setLoading(true);
+    setLoadingPhase("generating");
     setError(null);
     try {
-      const fd = new FormData();
-      for (const f of photos) fd.append("photos", f);
-      if (audio) fd.append("audio", audio);
-      if (csv) fd.append("transactions", csv);
-      const res = await fetch(API, { method: "POST", body: fd });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `HTTP ${res.status}`);
+      let res;
+      const visionResult = precomputedVisionRef.current;
+      const voiceResult = precomputedVoiceRef.current;
+      if (visionResult || voiceResult) {
+        const fd = new FormData();
+        if (visionResult) fd.append("vision_result", JSON.stringify(visionResult));
+        if (voiceResult) fd.append("voice_result", JSON.stringify(voiceResult));
+        if (csv) fd.append("transactions", csv);
+        res = await fetch(API_BASE + "/report/synthesize", { method: "POST", body: fd });
+      } else {
+        const fd = new FormData();
+        for (const f of photos) fd.append("photos", f);
+        if (audio) fd.append("audio", audio);
+        if (csv) fd.append("transactions", csv);
+        res = await fetch(API, { method: "POST", body: fd });
       }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: Report = await res.json();
       setReport(data);
       setScreen("report");
@@ -121,7 +193,7 @@ export default function Page() {
     } finally {
       setLoading(false);
     }
-  }, [photos, audio, csv]);
+  }, [photos, audio, csv, precomputedVision, precomputedVoice]);
 
   const fetchReports = useCallback(async () => {
     setHistoryLoading(true);
@@ -160,6 +232,10 @@ export default function Page() {
     setPhotos([]);
     setAudio(null);
     setCsv(null);
+    setPrecomputedVision(null);
+    setPrecomputedVoice(null);
+    precomputedVisionRef.current = null;
+    precomputedVoiceRef.current = null;
     setReport(null);
     setError(null);
   }, []);
@@ -439,6 +515,18 @@ export default function Page() {
             onChange={handlePhotos}
             className="mt-3 block w-full text-sm text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer"
           />
+          {precomputedVisionLoading && (
+            <p className="text-xs text-indigo-500 mt-2 flex items-center gap-1.5">
+              <span className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
+              Processing photos...
+            </p>
+          )}
+          {!precomputedVisionLoading && precomputedVision && photos.length > 0 && (
+            <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1.5">
+              <span className="w-2 h-2 bg-emerald-500 rounded-full" />
+              Ready
+            </p>
+          )}
           {photos.length > 0 && (
             <div className="mt-3 flex gap-2 flex-wrap">
               {photos.map((f, i) => (
@@ -450,7 +538,11 @@ export default function Page() {
                   />
                   <button
                     type="button"
-                    onClick={() => setPhotos((prev) => prev.filter((_, j) => j !== i))}
+                    onClick={() => {
+                        const newPhotos = photos.filter((_, j) => j !== i);
+                        setPhotos(newPhotos);
+                        if (newPhotos.length === 0) setPrecomputedVision(null);
+                    }}
                     className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
                   >
                     ×
@@ -471,15 +563,27 @@ export default function Page() {
             ref={audioRef}
             type="file"
             accept="audio/*"
-            onChange={(e) => setAudio(e.target.files?.[0] ?? null)}
+            onChange={(e) => handleAudio(e.target.files?.[0] ?? null)}
             className="mt-3 block w-full text-sm text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer"
           />
+          {precomputedVoiceLoading && (
+            <p className="text-xs text-indigo-500 mt-2 flex items-center gap-1.5">
+              <span className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
+              Processing voice note...
+            </p>
+          )}
+          {!precomputedVoiceLoading && precomputedVoice && audio && (
+            <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1.5">
+              <span className="w-2 h-2 bg-emerald-500 rounded-full" />
+              Ready
+            </p>
+          )}
           {audio && (
             <div className="mt-2 flex items-center gap-2 text-sm text-slate-600">
               <span>✓ {audio.name}</span>
               <button
                 type="button"
-                onClick={() => { setAudio(null); if (audioRef.current) audioRef.current.value = ""; }}
+                onClick={() => { handleAudio(null); if (audioRef.current) audioRef.current.value = ""; }}
                 className="text-red-500 hover:text-red-700 text-xs"
               >
                 remove
@@ -501,6 +605,12 @@ export default function Page() {
             onChange={(e) => setCsv(e.target.files?.[0] ?? null)}
             className="mt-3 block w-full text-sm text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer"
           />
+          {csv && (
+            <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1.5">
+              <span className="w-2 h-2 bg-emerald-500 rounded-full" />
+              Ready
+            </p>
+          )}
           {csv && (
             <div className="mt-2 flex items-center gap-2 text-sm text-slate-600">
               <span>✓ {csv.name}</span>
@@ -525,13 +635,13 @@ export default function Page() {
               : "bg-indigo-600 text-white hover:bg-indigo-700"
           }`}
         >
-          {loading ? "Analyzing evidence..." : "Generate Report"}
+          {loading ? loadingPhase === "finishing" ? "Finishing analysis..." : "Generating report..." : "Generate Report"}
         </button>
 
         {loading && (
           <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
             <span className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-            <span>Analyzing evidence…</span>
+            <span>{loadingPhase === "finishing" ? "Finishing analysis…" : "Generating report…"}</span>
           </div>
         )}
 

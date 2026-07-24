@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import List
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -148,6 +148,37 @@ async def _run_agent(
         print(f"[timing] {label} took {elapsed}s", flush=True)
 
 
+@app.post("/report/synthesize")
+async def report_synthesize(
+    vision_result: str = Form(None),
+    voice_result: str = Form(None),
+    transactions: UploadFile = File(None),
+):
+    timings = {}
+    
+    vision_data = json.loads(vision_result) if vision_result else None
+    voice_data = json.loads(voice_result) if voice_result else None
+    
+    transaction_result = None
+    if transactions is not None:
+        transaction_result = await _run_agent("transactions", transactions, True, analyze_transactions)
+
+    t0 = time.time()
+    rag_context = retrieve("MSME working capital lending guidance", k=3)
+    timings["rag"] = round(time.time() - t0, 2)
+
+    t0 = time.time()
+    report_data = synthesize_report(
+        vision_data, voice_data, transaction_result, rag_context
+    )
+    timings["synthesis"] = round(time.time() - t0, 2)
+    
+    report_data["vision_result"] = vision_data
+    report_data["voice_result"] = voice_data
+
+    return _finalize_report(report_data, transaction_result, rag_context, timings)
+
+
 @app.post("/report")
 async def report(
     photos: List[UploadFile] = File(None),
@@ -181,24 +212,6 @@ async def report(
         elif label == "transactions":
             transaction_result = result
 
-    input_errors = []
-    missing = []
-
-    if vision_result is None:
-        missing.append("photos")
-    elif "error" in vision_result:
-        input_errors.append("photos: could not process image(s)")
-
-    if voice_result is None:
-        missing.append("voice")
-    elif "error" in voice_result:
-        input_errors.append("voice: could not process audio")
-
-    if transaction_result is None:
-        missing.append("transactions")
-    elif "error" in transaction_result:
-        input_errors.append("transactions: could not parse CSV columns")
-
     t0 = time.time()
     rag_context = retrieve("MSME working capital lending guidance", k=3)
     timings["rag"] = round(time.time() - t0, 2)
@@ -208,9 +221,23 @@ async def report(
         vision_result, voice_result, transaction_result, rag_context
     )
     timings["synthesis"] = round(time.time() - t0, 2)
+    
+    report_data["vision_result"] = vision_result
+    report_data["voice_result"] = voice_result
+    
+    return _finalize_report(report_data, transaction_result, rag_context, timings)
+
+
+def _finalize_report(report_data, transaction_result, rag_context, timings):
+    input_errors = []
+    missing = []
+    
+    if report_data.get("vision_result") is None: missing.append("photos")
+    if report_data.get("voice_result") is None: missing.append("voice")
+    if transaction_result is None: missing.append("transactions")
 
     if "error" in report_data:
-        input_errors.append("synthesis: " + report_data["error"] + (" - " + report_data.get("detail", "") if report_data.get("detail") else ""))
+        input_errors.append("synthesis: " + report_data["error"])
 
     report_data["missing_inputs"] = missing
     report_data["input_errors"] = input_errors
@@ -230,8 +257,6 @@ async def report(
             seen.add(src)
             sources_cited.append(src)
     report_data["sources_cited"] = sources_cited
-
-    print(f"[timings] {timings}", flush=True)
 
     report_id = str(uuid.uuid4())
     os.makedirs(REPORT_CACHE_DIR, exist_ok=True)
