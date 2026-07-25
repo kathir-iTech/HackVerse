@@ -13,7 +13,7 @@ pip install -r requirements.txt
 python -m app.rag.ingest
 
 # Start the server
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8001
 ```
 
 - `GET /health` — health check

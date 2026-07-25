@@ -48,7 +48,6 @@ def health():
 
 @app.get("/reports")
 def list_reports():
-    import glob
     files = sorted(
         glob.glob(os.path.join(REPORT_CACHE_DIR, "*.json")),
         key=os.path.getmtime,

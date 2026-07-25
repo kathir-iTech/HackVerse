@@ -7,6 +7,9 @@ import time
 from faster_whisper import WhisperModel
 from openai import OpenAI
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+if not OPENROUTER_API_KEY:
+    print("ERROR: OPENROUTER_API_KEY environment variable is not set.", file=sys.stderr)
+    OPENROUTER_API_KEY = ""
 or_client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
 TEXT_MODEL = "ibm-granite/granite-4.1-8b"
 _whisper_model = None
