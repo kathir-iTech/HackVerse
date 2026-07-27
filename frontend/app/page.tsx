@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001/report";
 const API_BASE = API.replace(/\/report$/, "");
@@ -25,8 +25,11 @@ interface Report {
   missing_inputs: string[];
   discrepancy_flags: string[];
   source_agreement: Record<string, string>;
+  photo_reuse_flag?: string | null;
   report_id?: string;
+  vendor_name?: string;
   sources_cited?: string[];
+  evidence_completeness?: { sources_provided: number; sources_total: number; discrepancies_found: boolean };
   total_inflow?: number;
   total_outflow?: number;
   transaction_count?: number;
@@ -69,6 +72,16 @@ function bandColor(b: Band) {
   }
 }
 
+const BAND_ORDER: Record<string, number> = { Low: 0, Moderate: 1, Strong: 2 };
+
+function bandTrend(current: string, past: string): "Improved" | "Declined" | "Stable" {
+  const c = BAND_ORDER[current] ?? -1;
+  const p = BAND_ORDER[past] ?? -1;
+  if (c > p) return "Improved";
+  if (c < p) return "Declined";
+  return "Stable";
+}
+
 function BandTag({ label, value }: { label: string; value: Band }) {
   return (
     <div className="flex items-center justify-between py-2.5">
@@ -95,6 +108,10 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [reports, setReports] = useState<ReportSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [vendorName, setVendorName] = useState("");
+  const [vendorHistory, setVendorHistory] = useState<any[] | null>(null);
+  const [vendorHistoryLoading, setVendorHistoryLoading] = useState(false);
 
   const audioRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
@@ -102,6 +119,15 @@ export default function Page() {
   const precomputedVoiceLoadingRef = useRef(false);
   const precomputedVisionRef = useRef<any>(null);
   const precomputedVoiceRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!loading) {
+      setElapsed(0);
+      return;
+    }
+    const id = setInterval(() => setElapsed(prev => prev + 1), 1000);
+    return () => clearInterval(id);
+  }, [loading]);
 
   const canSubmit = photos.length > 0 || audio !== null || csv !== null;
 
@@ -167,6 +193,7 @@ export default function Page() {
     setLoading(true);
     setLoadingPhase("generating");
     setError(null);
+    setVendorHistory(null);
     try {
       let res;
       const visionResult = precomputedVisionRef.current;
@@ -176,24 +203,39 @@ export default function Page() {
         if (visionResult) fd.append("vision_result", JSON.stringify(visionResult));
         if (voiceResult) fd.append("voice_result", JSON.stringify(voiceResult));
         if (csv) fd.append("transactions", csv);
+        if (vendorName) fd.append("vendor_name", vendorName);
         res = await fetch(API_BASE + "/report/synthesize", { method: "POST", body: fd });
       } else {
         const fd = new FormData();
         for (const f of photos) fd.append("photos", f);
         if (audio) fd.append("audio", audio);
         if (csv) fd.append("transactions", csv);
+        if (vendorName) fd.append("vendor_name", vendorName);
         res = await fetch(API, { method: "POST", body: fd });
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: Report = await res.json();
       setReport(data);
       setScreen("report");
+      if (vendorName) {
+        setVendorHistoryLoading(true);
+        try {
+          const vr = await fetch(API_BASE + "/vendors/" + encodeURIComponent(vendorName) + "/history");
+          if (vr.ok) {
+            const history = await vr.json();
+            setVendorHistory(history);
+          }
+        } catch {
+        } finally {
+          setVendorHistoryLoading(false);
+        }
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
-  }, [photos, audio, csv, precomputedVision, precomputedVoice]);
+  }, [photos, audio, csv, precomputedVision, precomputedVoice, vendorName]);
 
   const fetchReports = useCallback(async () => {
     setHistoryLoading(true);
@@ -242,6 +284,7 @@ export default function Page() {
 
   if (screen === "report" && report) {
     const hasFinancial = report.transaction_count !== undefined;
+    const ec = report.evidence_completeness;
 
     return (
       <main className="max-w-2xl mx-auto px-4 py-10">
@@ -257,6 +300,36 @@ export default function Page() {
             New Report
           </button>
         </div>
+
+        {ec && (
+          <div className="bg-slate-50 rounded-xl border border-slate-200 p-4">
+            <div className="flex items-center gap-3">
+              <div className="flex gap-1">
+                {Array.from({ length: ec.sources_total }, (_, i) => (
+                  <span
+                    key={i}
+                    className={`w-3 h-3 rounded-full border-2 ${
+                      i < ec.sources_provided
+                        ? "bg-indigo-500 border-indigo-500"
+                        : "bg-white border-slate-300"
+                    }`}
+                  />
+                ))}
+              </div>
+              <div>
+                <p className="text-sm font-medium text-slate-700">
+                  {ec.sources_provided} of {ec.sources_total} evidence sources provided
+                </p>
+                <p className="text-xs text-slate-500">
+                  {ec.discrepancies_found
+                    ? "Discrepancies flagged \u2014 see below"
+                    : "No discrepancies found"}
+                </p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Reflects how much evidence was available, not business quality.</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="space-y-6">
           {/* Business type */}
@@ -279,6 +352,33 @@ export default function Page() {
             <span className="text-xs font-medium text-indigo-500 uppercase tracking-wide">Assessment</span>
             <p className="mt-1 text-lg font-semibold text-indigo-900">{report.assessment_band}</p>
           </div>
+
+          {/* Vendor history */}
+          {vendorHistory && vendorHistory.length > 0 && report.vendor_name && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+              <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Assessment History for {report.vendor_name}</span>
+              <div className="mt-3 space-y-1.5 text-sm">
+                {vendorHistory.map((entry, i) => {
+                  const trend = i === vendorHistory.length - 1 ? "Stable" : bandTrend(report.assessment_band, entry.assessment_band);
+                  const trendColor = trend === "Improved" ? "text-emerald-600" : trend === "Declined" ? "text-red-600" : "text-slate-400";
+                  const trendArrow = trend === "Improved" ? "↑" : trend === "Declined" ? "↓" : "→";
+                  return (
+                    <div key={entry.report_id} className="flex items-center justify-between text-sm">
+                      <span className="text-slate-500 text-xs">{new Date(entry.generated_at).toLocaleDateString()}</span>
+                      <span className={`px-2 py-0.5 text-[11px] font-semibold border rounded ${bandColor(entry.assessment_band as Band)}`}>
+                        {entry.assessment_band}
+                      </span>
+                      {i < vendorHistory.length - 1 && (
+                        <span className={`text-xs font-medium ${trendColor}`}>
+                          {trendArrow} {trend}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Financial Evidence card */}
           {hasFinancial && (
@@ -380,17 +480,23 @@ export default function Page() {
             </div>
           )}
 
-          {/* Discrepancy flags */}
-          {report.discrepancy_flags && report.discrepancy_flags.length > 0 && (
+          {/* Discrepancy flags / photo reuse */}
+          {(report.photo_reuse_flag || (report.discrepancy_flags && report.discrepancy_flags.length > 0)) && (
             <div className="bg-amber-50 rounded-xl border border-amber-200 p-5">
               <span className="text-xs font-medium text-amber-700 uppercase tracking-wide">Needs Officer Review</span>
               <ul className="mt-2 space-y-1">
-                {report.discrepancy_flags.map((s, i) => (
+                {report.discrepancy_flags && report.discrepancy_flags.map((s, i) => (
                   <li key={i} className="text-sm text-amber-800 flex gap-2">
                     <span className="text-amber-400 mt-0.5 shrink-0">•</span>
                     <span>{s}</span>
                   </li>
                 ))}
+                {report.photo_reuse_flag && (
+                  <li className="text-sm text-amber-800 flex gap-2">
+                    <span className="text-amber-400 mt-0.5 shrink-0">•</span>
+                    <span>{report.photo_reuse_flag}</span>
+                  </li>
+                )}
               </ul>
             </div>
           )}
@@ -625,12 +731,27 @@ export default function Page() {
           )}
         </div>
 
+        {/* Vendor Name */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-sm font-semibold text-slate-800">Vendor Name</h2>
+            <span className="text-xs text-slate-400">optional</span>
+          </div>
+          <input
+            type="text"
+            value={vendorName}
+            onChange={(e) => setVendorName(e.target.value)}
+            placeholder="e.g. Sri Krishna Traders"
+            className="mt-3 block w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+        </div>
+
         {/* Submit */}
         <button
           onClick={handleSubmit}
-          disabled={!canSubmit || loading}
+          disabled={!canSubmit || loading || precomputedVisionLoading || precomputedVoiceLoading}
           className={`w-full py-3 px-6 rounded-xl text-sm font-semibold transition ${
-            !canSubmit || loading
+            !canSubmit || loading || precomputedVisionLoading || precomputedVoiceLoading
               ? "bg-slate-200 text-slate-400 cursor-not-allowed"
               : "bg-indigo-600 text-white hover:bg-indigo-700"
           }`}
@@ -639,9 +760,9 @@ export default function Page() {
         </button>
 
         {loading && (
-          <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
-            <span className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-            <span>{loadingPhase === "finishing" ? "Finishing analysis…" : "Generating report…"}</span>
+          <div className="flex items-center justify-center gap-3 text-sm text-slate-500">
+            <span className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+            <span>{loadingPhase === "finishing" ? "Finishing analysis…" : `Generating report… ${elapsed}s`}</span>
           </div>
         )}
 

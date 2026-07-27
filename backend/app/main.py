@@ -7,6 +7,7 @@ import tempfile
 import time
 import uuid
 from datetime import datetime
+from io import BytesIO
 from typing import List
 
 from dotenv import load_dotenv
@@ -25,11 +26,13 @@ from app.agents.synthesis_agent import synthesize_report
 app = FastAPI(title="HackVerse RAG API")
 
 REPORT_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "report_cache")
+PHOTO_HASH_DIR = os.path.join(os.path.dirname(__file__), "..", "photo_hashes")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
+        "http://localhost:3001",
         "https://hack-verse-psi.vercel.app",
     ],
     allow_methods=["*"],
@@ -67,6 +70,31 @@ def list_reports():
             })
         except Exception:
             continue
+    return entries
+
+
+@app.get("/vendors/{vendor_name}/history")
+def vendor_history(vendor_name: str):
+    vendor = vendor_name.lower()
+    entries = []
+    for path in glob.glob(os.path.join(REPORT_CACHE_DIR, "*.json")):
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        if data.get("vendor_name", "").lower() != vendor:
+            continue
+        mtime = os.path.getmtime(path)
+        entries.append({
+            "report_id": data["report_id"],
+            "generated_at": datetime.fromtimestamp(mtime).isoformat(),
+            "assessment_band": data.get("assessment_band", ""),
+            "revenue_consistency_band": data.get("revenue_consistency_band", ""),
+            "inventory_observation_band": data.get("inventory_observation_band", ""),
+            "digital_activity_band": data.get("digital_activity_band", ""),
+        })
+    entries.sort(key=lambda e: e["generated_at"])
     return entries
 
 
@@ -147,11 +175,54 @@ async def _run_agent(
         print(f"[timing] {label} took {elapsed}s", flush=True)
 
 
+async def _check_photo_hashes(photo_files: list[UploadFile], vendor_name: str) -> str | None:
+    if not vendor_name:
+        return None
+    try:
+        from imagehash import average_hash, hex_to_hash
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        new_hashes = []
+        for f in photo_files:
+            content = await f.read()
+            img = Image.open(BytesIO(content))
+            h = str(average_hash(img))
+            new_hashes.append(h)
+            f.file.seek(0)
+
+        vendor_file = os.path.join(PHOTO_HASH_DIR, f"{vendor_name}.json")
+        existing = []
+        if os.path.isfile(vendor_file):
+            with open(vendor_file) as fh:
+                existing = json.load(fh)
+
+        for h in new_hashes:
+            h_obj = hex_to_hash(h)
+            for eh in existing:
+                if h_obj - hex_to_hash(eh) <= 2:
+                    os.makedirs(PHOTO_HASH_DIR, exist_ok=True)
+                    all_hashes = existing + new_hashes
+                    with open(vendor_file, "w") as fh:
+                        json.dump(all_hashes, fh)
+                    return "This photo appears visually identical to one submitted in a previous assessment for this vendor \u2014 please verify it was taken during this visit."
+
+        os.makedirs(PHOTO_HASH_DIR, exist_ok=True)
+        all_hashes = existing + new_hashes
+        with open(vendor_file, "w") as fh:
+            json.dump(all_hashes, fh)
+        return None
+    except Exception:
+        return None
+
+
 @app.post("/report/synthesize")
 async def report_synthesize(
     vision_result: str = Form(None),
     voice_result: str = Form(None),
     transactions: UploadFile = File(None),
+    vendor_name: str = Form(None),
 ):
     timings = {}
     
@@ -174,6 +245,9 @@ async def report_synthesize(
     
     report_data["vision_result"] = vision_data
     report_data["voice_result"] = voice_data
+    if vendor_name:
+        report_data["vendor_name"] = vendor_name
+    report_data["photo_reuse_flag"] = None
 
     return _finalize_report(report_data, transaction_result, rag_context, timings)
 
@@ -183,8 +257,10 @@ async def report(
     photos: List[UploadFile] = File(None),
     audio: UploadFile = File(None),
     transactions: UploadFile = File(None),
+    vendor_name: str = Form(None),
 ):
     timings = {}
+    photo_reuse_flag = await _check_photo_hashes(photos, vendor_name) if photos else None
 
     coros = []
     mapping = []
@@ -223,6 +299,9 @@ async def report(
     
     report_data["vision_result"] = vision_result
     report_data["voice_result"] = voice_result
+    if vendor_name:
+        report_data["vendor_name"] = vendor_name
+    report_data["photo_reuse_flag"] = photo_reuse_flag
     
     return _finalize_report(report_data, transaction_result, rag_context, timings)
 
@@ -241,6 +320,19 @@ def _finalize_report(report_data, transaction_result, rag_context, timings):
     report_data["missing_inputs"] = missing
     report_data["input_errors"] = input_errors
     report_data["_timings"] = timings
+
+    sources_provided = 0
+    if report_data.get("vision_result") is not None:
+        sources_provided += 1
+    if report_data.get("voice_result") is not None:
+        sources_provided += 1
+    if transaction_result is not None and "error" not in transaction_result:
+        sources_provided += 1
+    report_data["evidence_completeness"] = {
+        "sources_provided": sources_provided,
+        "sources_total": 3,
+        "discrepancies_found": bool(report_data.get("discrepancy_flags")),
+    }
 
     if transaction_result and "error" not in transaction_result:
         TXN_FIELDS = ["total_inflow", "total_outflow", "transaction_count", "average_transaction", "volatility", "trend", "date_range_days", "earliest_date", "latest_date"]

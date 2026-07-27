@@ -6,6 +6,16 @@ import sys
 import base64
 from openai import OpenAI
 
+
+def compute_image_hash(image_path: str) -> str | None:
+    try:
+        from PIL import Image
+        from imagehash import average_hash
+        img = Image.open(image_path)
+        return str(average_hash(img))
+    except Exception:
+        return None
+
 api_key = os.environ.get("OPENROUTER_API_KEY")
 if not api_key:
     print("ERROR: OPENROUTER_API_KEY environment variable is not set.", file=sys.stderr)

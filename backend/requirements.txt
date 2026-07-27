@@ -12,3 +12,5 @@ faster-whisper
 openai
 pandas
 numpy
+imagehash
+Pillow
