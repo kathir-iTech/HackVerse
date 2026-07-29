@@ -39,6 +39,24 @@ interface Report {
   date_range_days?: number;
   earliest_date?: string;
   latest_date?: string;
+  location_verification?: {
+    location_found: boolean;
+    matched_name?: string;
+    coordinates?: { lat: string; lon: string };
+    address?: string;
+    error?: string;
+  };
+  risk_indicators?: {
+    indicators: {
+      high_transaction_volatility: boolean;
+      unverifiable_location: boolean;
+      cross_source_conflicts: boolean;
+      possible_photo_reuse: boolean;
+      incomplete_evidence: boolean;
+    };
+    indicators_triggered: number;
+    risk_summary: string;
+  };
 }
 
 const AGREEMENT_COLORS: Record<string, string> = {
@@ -110,6 +128,7 @@ export default function Page() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [vendorName, setVendorName] = useState("");
+  const [shopAddress, setShopAddress] = useState("");
   const [vendorHistory, setVendorHistory] = useState<any[] | null>(null);
   const [vendorHistoryLoading, setVendorHistoryLoading] = useState(false);
 
@@ -204,6 +223,7 @@ export default function Page() {
         if (voiceResult) fd.append("voice_result", JSON.stringify(voiceResult));
         if (csv) fd.append("transactions", csv);
         if (vendorName) fd.append("vendor_name", vendorName);
+        if (shopAddress) fd.append("shop_address", shopAddress);
         res = await fetch(API_BASE + "/report/synthesize", { method: "POST", body: fd });
       } else {
         const fd = new FormData();
@@ -211,6 +231,7 @@ export default function Page() {
         if (audio) fd.append("audio", audio);
         if (csv) fd.append("transactions", csv);
         if (vendorName) fd.append("vendor_name", vendorName);
+        if (shopAddress) fd.append("shop_address", shopAddress);
         res = await fetch(API, { method: "POST", body: fd });
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -235,7 +256,7 @@ export default function Page() {
     } finally {
       setLoading(false);
     }
-  }, [photos, audio, csv, precomputedVision, precomputedVoice, vendorName]);
+  }, [photos, audio, csv, precomputedVision, precomputedVoice, vendorName, shopAddress]);
 
   const fetchReports = useCallback(async () => {
     setHistoryLoading(true);
@@ -331,6 +352,45 @@ export default function Page() {
           </div>
         )}
 
+        {/* Risk Indicators */}
+        {report.risk_indicators && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Risk Indicators</span>
+            <p className={`mt-2 text-sm font-medium ${report.risk_indicators.indicators_triggered === 0 ? "text-emerald-700" : "text-amber-800"}`}>
+              {report.risk_indicators.risk_summary}
+            </p>
+            {report.risk_indicators.indicators_triggered > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {report.risk_indicators.indicators.high_transaction_volatility && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                    High transaction volatility
+                  </span>
+                )}
+                {report.risk_indicators.indicators.unverifiable_location && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                    Unverifiable location
+                  </span>
+                )}
+                {report.risk_indicators.indicators.cross_source_conflicts && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                    Cross-source conflicts detected
+                  </span>
+                )}
+                {report.risk_indicators.indicators.possible_photo_reuse && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                    Possible photo reuse
+                  </span>
+                )}
+                {report.risk_indicators.indicators.incomplete_evidence && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                    Incomplete evidence
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="space-y-6">
           {/* Business type */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
@@ -376,6 +436,31 @@ export default function Page() {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          )}
+
+          {/* Location Verification */}
+          {report.location_verification && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+              <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Location Verification</span>
+              <div className="mt-2">
+                {report.location_verification.location_found ? (
+                  <div>
+                    <p className="text-sm text-emerald-700 flex items-center gap-1.5">
+                      <span className="w-2 h-2 bg-emerald-500 rounded-full" />
+                      Address verified against public map records
+                    </p>
+                    {report.location_verification.address && (
+                      <p className="mt-1 text-xs text-slate-400">{report.location_verification.address}</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500">
+                    Address could not be verified against public records
+                    {report.location_verification.error && <span className="text-xs text-slate-400"> ({report.location_verification.error})</span>}
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -742,6 +827,21 @@ export default function Page() {
             value={vendorName}
             onChange={(e) => setVendorName(e.target.value)}
             placeholder="e.g. Sri Krishna Traders"
+            className="mt-3 block w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+        </div>
+
+        {/* Shop Address */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-sm font-semibold text-slate-800">Shop Address / Area</h2>
+            <span className="text-xs text-slate-400">optional</span>
+          </div>
+          <input
+            type="text"
+            value={shopAddress}
+            onChange={(e) => setShopAddress(e.target.value)}
+            placeholder="e.g. 123 MG Road, Bangalore"
             className="mt-3 block w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-400"
           />
         </div>

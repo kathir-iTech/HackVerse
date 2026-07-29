@@ -22,6 +22,8 @@ from app.agents.vision_agent import analyze_photos
 from app.agents.voice_agent import process_voice
 from app.agents.transaction_agent import analyze_transactions
 from app.agents.synthesis_agent import synthesize_report
+from app.agents.location_agent import verify_location, check_address_consistency
+from app.agents.anomaly_agent import compute_risk_indicators
 
 app = FastAPI(title="HackVerse RAG API")
 
@@ -223,6 +225,7 @@ async def report_synthesize(
     voice_result: str = Form(None),
     transactions: UploadFile = File(None),
     vendor_name: str = Form(None),
+    shop_address: str = Form(None),
 ):
     timings = {}
     
@@ -248,6 +251,24 @@ async def report_synthesize(
     if vendor_name:
         report_data["vendor_name"] = vendor_name
     report_data["photo_reuse_flag"] = None
+    report_data["risk_indicators"] = compute_risk_indicators(
+        vision_data, voice_data, transaction_result,
+        report_data.get("discrepancy_flags"),
+        report_data.get("location_verification"),
+        report_data.get("photo_reuse_flag"),
+    )
+
+    if shop_address:
+        location_result = await asyncio.to_thread(verify_location, vendor_name or "", shop_address)
+        report_data["location_verification"] = location_result
+        if location_result.get("location_found") and voice_data:
+            voice_location = voice_data.get("extracted", {}).get("location", "")
+            if voice_location:
+                flag = check_address_consistency(voice_location, location_result)
+                if flag:
+                    if "discrepancy_flags" not in report_data:
+                        report_data["discrepancy_flags"] = []
+                    report_data["discrepancy_flags"].append(flag)
 
     return _finalize_report(report_data, transaction_result, rag_context, timings)
 
@@ -258,6 +279,7 @@ async def report(
     audio: UploadFile = File(None),
     transactions: UploadFile = File(None),
     vendor_name: str = Form(None),
+    shop_address: str = Form(None),
 ):
     timings = {}
     photo_reuse_flag = await _check_photo_hashes(photos, vendor_name) if photos else None
@@ -302,6 +324,24 @@ async def report(
     if vendor_name:
         report_data["vendor_name"] = vendor_name
     report_data["photo_reuse_flag"] = photo_reuse_flag
+    report_data["risk_indicators"] = compute_risk_indicators(
+        vision_result, voice_result, transaction_result,
+        report_data.get("discrepancy_flags"),
+        report_data.get("location_verification"),
+        report_data.get("photo_reuse_flag"),
+    )
+
+    if shop_address:
+        location_result = await asyncio.to_thread(verify_location, vendor_name or "", shop_address)
+        report_data["location_verification"] = location_result
+        if location_result.get("location_found") and voice_result:
+            voice_location = voice_result.get("extracted", {}).get("location", "")
+            if voice_location:
+                flag = check_address_consistency(voice_location, location_result)
+                if flag:
+                    if "discrepancy_flags" not in report_data:
+                        report_data["discrepancy_flags"] = []
+                    report_data["discrepancy_flags"].append(flag)
     
     return _finalize_report(report_data, transaction_result, rag_context, timings)
 
