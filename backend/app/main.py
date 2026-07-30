@@ -251,12 +251,6 @@ async def report_synthesize(
     if vendor_name:
         report_data["vendor_name"] = vendor_name
     report_data["photo_reuse_flag"] = None
-    report_data["risk_indicators"] = compute_risk_indicators(
-        vision_data, voice_data, transaction_result,
-        report_data.get("discrepancy_flags"),
-        report_data.get("location_verification"),
-        report_data.get("photo_reuse_flag"),
-    )
 
     if shop_address:
         location_result = await asyncio.to_thread(verify_location, vendor_name or "", shop_address)
@@ -269,6 +263,13 @@ async def report_synthesize(
                     if "discrepancy_flags" not in report_data:
                         report_data["discrepancy_flags"] = []
                     report_data["discrepancy_flags"].append(flag)
+
+    report_data["risk_indicators"] = compute_risk_indicators(
+        vision_data, voice_data, transaction_result,
+        report_data.get("discrepancy_flags"),
+        report_data.get("location_verification"),
+        report_data.get("photo_reuse_flag"),
+    )
 
     return _finalize_report(report_data, transaction_result, rag_context, timings)
 
@@ -324,12 +325,6 @@ async def report(
     if vendor_name:
         report_data["vendor_name"] = vendor_name
     report_data["photo_reuse_flag"] = photo_reuse_flag
-    report_data["risk_indicators"] = compute_risk_indicators(
-        vision_result, voice_result, transaction_result,
-        report_data.get("discrepancy_flags"),
-        report_data.get("location_verification"),
-        report_data.get("photo_reuse_flag"),
-    )
 
     if shop_address:
         location_result = await asyncio.to_thread(verify_location, vendor_name or "", shop_address)
@@ -342,7 +337,14 @@ async def report(
                     if "discrepancy_flags" not in report_data:
                         report_data["discrepancy_flags"] = []
                     report_data["discrepancy_flags"].append(flag)
-    
+
+    report_data["risk_indicators"] = compute_risk_indicators(
+        vision_result, voice_result, transaction_result,
+        report_data.get("discrepancy_flags"),
+        report_data.get("location_verification"),
+        report_data.get("photo_reuse_flag"),
+    )
+
     return _finalize_report(report_data, transaction_result, rag_context, timings)
 
 
