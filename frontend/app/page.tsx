@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001/report";
 const API_BASE = API.replace(/\/report$/, "");
@@ -153,12 +153,29 @@ function needsRetry(data: Report): boolean {
 }
 
 export default function Page() {
-  const [screen, setScreen] = useState<"upload" | "report" | "history" | "retry">("upload");
+  const [screen, setScreen] = useState<"pin" | "upload" | "report" | "history" | "retry">("pin");
+  const [pin, setPin] = useState("");
+  const [pinError, setPinError] = useState(false);
   const [photos, setPhotos] = useState<File[]>([]);
   const [audio, setAudio] = useState<File | null>(null);
   const [csv, setCsv] = useState<File | null>(null);
   const [manualVoiceText, setManualVoiceText] = useState("");
   const [voiceLanguage, setVoiceLanguage] = useState("");
+  const [recording, setRecording] = useState(false);
+  const [recordingSaved, setRecordingSaved] = useState<number | null>(null);
+  const [recordingElapsed, setRecordingElapsed] = useState(0);
+  const recordingElapsedRef = useRef(0);
+
+  useEffect(() => {
+    if (!recording) return;
+    setRecordingElapsed(0);
+    recordingElapsedRef.current = 0;
+    const id = setInterval(() => {
+      recordingElapsedRef.current += 1;
+      setRecordingElapsed((s) => s + 1);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [recording]);
   const [showMap, setShowMap] = useState(false);
   const [pinnedLocation, setPinnedLocation] = useState<{ lat: number; lon: number } | null>(null);
   const [expandedReason, setExpandedReason] = useState<ReasonKey | null>(null);
@@ -205,6 +222,10 @@ export default function Page() {
     rent_agreement: useRef<HTMLInputElement>(null),
     trade_license: useRef<HTMLInputElement>(null),
   };
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordChunksRef = useRef<Blob[]>([]);
+  const recordStartRef = useRef(0);
+  const audioStreamRef = useRef<MediaStream | null>(null);
   const mapRef = useRef<any>(null);
   const markerRef = useRef<any>(null);
   const precomputedVisionLoadingRef = useRef(false);
@@ -222,9 +243,28 @@ export default function Page() {
   }, [loading]);
 
   const canSubmit = photos.length > 0 || audio !== null || csv !== null || Object.values(documents).some(Boolean);
+  const authHeaders = useMemo<Record<string, string>>(() => {
+    const headers: Record<string, string> = {};
+    if (pin) {
+      headers["X-Officer-Pin"] = pin;
+    }
+    return headers;
+  }, [pin]);
+  const handleAuthFailure = useCallback(() => {
+    setPin("");
+    setPinError(true);
+    setScreen("pin");
+    setLoading(false);
+    setLoadingPhase("generating");
+    setError(null);
+  }, []);
   const handleDocuments = useCallback((docType: string, file: File | null) => {
     setDocuments(prev => ({ ...prev, [docType]: file }));
   }, []);
+  const recordingSupported =
+    typeof window !== "undefined" &&
+    typeof MediaRecorder !== "undefined" &&
+    !!navigator.mediaDevices?.getUserMedia;
 
   const handlePhotos = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -239,7 +279,7 @@ export default function Page() {
     const fd = new FormData();
     files.forEach(f => fd.append("files", f));
     try {
-      const res = await fetch(API_BASE + "/agents/vision", { method: "POST", body: fd });
+      const res = await fetch(API_BASE + "/agents/vision", { method: "POST", headers: authHeaders, body: fd });
       const data = await res.json();
       setPrecomputedVision(data);
       precomputedVisionRef.current = data;
@@ -265,7 +305,7 @@ export default function Page() {
     fd.append("file", file);
     if (voiceLanguage) fd.append("language", voiceLanguage);
     try {
-      const res = await fetch(API_BASE + "/agents/voice", { method: "POST", body: fd });
+      const res = await fetch(API_BASE + "/agents/voice", { method: "POST", headers: authHeaders, body: fd });
       const data = await res.json();
       setPrecomputedVoice(data);
       precomputedVoiceRef.current = data;
@@ -277,6 +317,46 @@ export default function Page() {
       precomputedVoiceLoadingRef.current = false;
     }
   }, [voiceLanguage]);
+
+  const toggleRecording = useCallback(async () => {
+    if (recording) {
+      if (mediaRecorderRef.current) {
+        mediaRecorderRef.current.stop();
+        mediaRecorderRef.current = null;
+      }
+      setRecording(false);
+      return;
+    }
+    if (precomputedVoiceLoading) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+      const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg", "audio/mp4"];
+      const mime = candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? "";
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      recordChunksRef.current = [];
+      rec.ondataavailable = (e) => {
+        if (e.data.size > 0) recordChunksRef.current.push(e.data);
+      };
+      rec.onstop = () => {
+        const blob = new Blob(recordChunksRef.current, { type: rec.mimeType || "audio/webm" });
+        const ext = blob.type.includes("ogg") ? "ogg" : blob.type.includes("mp4") ? "m4a" : "webm";
+        const file = new File([blob], `recording.${ext}`, { type: blob.type });
+        const secs = Math.max(1, recordingElapsedRef.current);
+        handleAudio(file);
+        setRecordingSaved(secs);
+        audioStreamRef.current?.getTracks().forEach((t) => t.stop());
+        audioStreamRef.current = null;
+      };
+      recordStartRef.current = Date.now();
+      rec.start();
+      mediaRecorderRef.current = rec;
+      setRecording(true);
+      setRecordingSaved(null);
+    } catch {
+      setError("Microphone access was denied — use the file upload instead.");
+    }
+  }, [recording, handleAudio, precomputedVoiceLoading]);
 
   useEffect(() => {
     if (!showMap) return;
@@ -439,7 +519,7 @@ export default function Page() {
         if (hasSavingsAccount) fd.append("has_savings_account", hasSavingsAccount);
         if (annualTurnover !== "") fd.append("annual_turnover", annualTurnover);
         if (udyamNumber) fd.append("udyam_number", udyamNumber);
-        res = await fetch(API_BASE + "/report/synthesize", { method: "POST", body: fd });
+        res = await fetch(API_BASE + "/report/synthesize", { method: "POST", headers: authHeaders, body: fd });
       } else {
         const fd = new FormData();
         for (const f of photos) fd.append("photos", f);
@@ -459,9 +539,12 @@ export default function Page() {
         if (hasSavingsAccount) fd.append("has_savings_account", hasSavingsAccount);
         if (annualTurnover !== "") fd.append("annual_turnover", annualTurnover);
         if (udyamNumber) fd.append("udyam_number", udyamNumber);
-        res = await fetch(API, { method: "POST", body: fd });
+        res = await fetch(API, { method: "POST", headers: authHeaders, body: fd });
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (res.status === 401) {
+        handleAuthFailure();
+        return;
+      }
       const data: Report = await res.json();
       setReport(data);
       setLoadingPhase("checking");
@@ -470,8 +553,10 @@ export default function Page() {
       if (vendorName) {
         setVendorHistoryLoading(true);
         try {
-          const vr = await fetch(API_BASE + "/vendors/" + encodeURIComponent(vendorName) + "/history");
-          if (vr.ok) {
+          const vr = await fetch(API_BASE + "/vendors/" + encodeURIComponent(vendorName) + "/history", { headers: authHeaders });
+          if (vr.status === 401) {
+            handleAuthFailure();
+          } else if (vr.ok) {
             const history = await vr.json();
             setVendorHistory(history);
           }
@@ -486,13 +571,17 @@ export default function Page() {
       setProcessingSteps(prev => [...prev.map(s => ({ ...s, status: "done" as const })), { id: "ready", label: "✅ Report ready", status: "done" as const }]);
       setLoading(false);
     }
-  }, [photos, audio, csv, precomputedVision, precomputedVoice, vendorName, shopAddress, manualVoiceText, voiceLanguage, pinnedLocation, documents]);
+  }, [photos, audio, csv, precomputedVision, precomputedVoice, vendorName, shopAddress, manualVoiceText, voiceLanguage, pinnedLocation, documents, authHeaders, handleAuthFailure]);
 
   const fetchReports = useCallback(async () => {
     setHistoryLoading(true);
     setError(null);
     try {
-      const res = await fetch(API_BASE + "/reports");
+      const res = await fetch(API_BASE + "/reports", { headers: authHeaders });
+      if (res.status === 401) {
+        handleAuthFailure();
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: ReportSummary[] = await res.json();
       setReports(data);
@@ -502,13 +591,17 @@ export default function Page() {
     } finally {
       setHistoryLoading(false);
     }
-  }, []);
+  }, [authHeaders, handleAuthFailure]);
 
   const viewReport = useCallback(async (id: string) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(API_BASE + "/reports/" + id);
+      const res = await fetch(API_BASE + "/reports/" + id, { headers: authHeaders });
+      if (res.status === 401) {
+        handleAuthFailure();
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: Report = await res.json();
       setReport(data);
@@ -518,15 +611,21 @@ export default function Page() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authHeaders, handleAuthFailure]);
 
   const reset = useCallback(() => {
     setScreen("upload");
+    setPin("");
+    setPinError(false);
     setPhotos([]);
     setAudio(null);
     setCsv(null);
     setManualVoiceText("");
     setVoiceLanguage("");
+    setRecording(false);
+    setRecordingSaved(null);
+    setRecordingElapsed(0);
+    recordingElapsedRef.current = 0;
     setPinnedLocation(null);
     setShowMap(false);
     setRetryFocus(null);
@@ -540,6 +639,45 @@ export default function Page() {
     setReport(null);
     setError(null);
   }, []);
+
+  if (screen === "pin") {
+    return (
+      <main className="max-w-sm mx-auto px-4 py-16 flex flex-col items-center">
+        <div className="text-4xl mb-3">🔐</div>
+        <h1 className="text-2xl font-bold text-slate-900">Officer Access</h1>
+        <p className="mt-1 text-sm text-gray-500">Enter your PIN to continue.</p>
+        <input
+          type="password"
+          inputMode="numeric"
+          maxLength={6}
+          autoFocus
+          value={pin}
+          onChange={(e) => { setPin(e.target.value.replace(/\D/g, "")); setPinError(false); }}
+          onKeyDown={(e) => { if (e.key === "Enter" && pin.trim().length >= 4) { setScreen("upload"); setPinError(false); } }}
+          placeholder="••••"
+          className="mt-6 w-full min-h-12 rounded-xl border border-slate-300 px-4 py-3 text-center text-xl tracking-[0.5em] text-slate-900 placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+        />
+        {pinError && (
+          <p className="mt-3 text-sm font-medium text-red-600">Incorrect PIN — try again.</p>
+        )}
+        <button
+          type="button"
+          onClick={() => pin.trim().length >= 4 && setScreen("upload")}
+          disabled={pin.trim().length < 4}
+          className="mt-5 w-full py-3.5 px-6 rounded-xl text-base font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 transition"
+        >
+          Continue
+        </button>
+        <button
+          type="button"
+          onClick={() => setScreen("upload")}
+          className="mt-3 text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2"
+        >
+          Skip (Demo Mode)
+        </button>
+      </main>
+    );
+  }
 
   if (screen === "report" && report) {
     const hasFinancial = report.transaction_count !== undefined;
@@ -1395,22 +1533,55 @@ const trendArrow = trend === "Improved" ? "↑" : trend === "Declined" ? "↓" :
               <h2 className="text-lg font-semibold text-slate-900">Voice or Text Field Notes</h2>
               <span className="text-sm text-gray-500">optional</span>
             </div>
-            <div className="mt-5">
-              <label className="flex flex-col items-center justify-center min-h-24 px-4 py-6 rounded-xl border-2 border-dashed border-slate-300 text-slate-600 hover:bg-slate-50 cursor-pointer transition">
-                <span className="text-2xl">🎵</span>
-                <span className="block text-base font-semibold mt-2">Upload Audio File</span>
-                <span className="block text-xs text-gray-500 mt-0.5">Attach a voice note or field recording</span>
-                <input
-                  ref={audioRef}
-                  type="file"
-                  accept="audio/*"
-                  onChange={(e) => handleAudio(e.target.files?.[0] ?? null)}
-                  className="hidden"
-                />
-              </label>
-            </div>
+            <div className="mt-5 flex flex-col items-center">
+              {recordingSupported ? (
+                <>
+                  <div className="relative">
+                    {recording && <span className="absolute -inset-1.5 rounded-full bg-red-400/40 animate-ping" />}
+                    <button
+                      type="button"
+                      onClick={toggleRecording}
+                      disabled={precomputedVoiceLoading}
+                      className={`relative flex items-center justify-center w-24 h-24 rounded-full text-3xl font-semibold transition ${
+                        recording
+                          ? "bg-red-600 text-white"
+                          : precomputedVoiceLoading
+                          ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                          : "bg-indigo-600 text-white hover:bg-indigo-700"
+                      }`}
+                    >
+                      🎙
+                    </button>
+                  </div>
+                  <p className="mt-3 text-base font-medium text-slate-800">
+                    {recording ? "Recording... tap to stop" : "Tap to Record"}
+                  </p>
+                  {recording && (
+                    <p className="mt-1 text-xs font-medium text-red-600 flex items-center gap-1.5">
+                      <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                      Recording... {recordingElapsed}s
+                    </p>
+                  )}
+                  {!recording && recordingSaved !== null && (
+                    <div className="mt-2 flex items-center gap-3">
+                      <p className="text-xs text-emerald-600">✓ Recording saved ({recordingSaved}s)</p>
+                      <button
+                        type="button"
+                        onClick={() => { setRecordingSaved(null); handleAudio(null); }}
+                        className="text-xs text-indigo-600 hover:text-indigo-800 underline underline-offset-2"
+                      >
+                        Re-record
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="mt-2 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  Recording requires HTTPS — please upload an audio file below.
+                </p>
+              )}
               {precomputedVoiceLoading && (
-                <p className="mt-2 text-xs text-indigo-600 flex items-center gap-1.5">
+                <p className="mt-2 text-xs text-indigo-600 flex items-center gap-.5">
                   <span className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
                   ⏳ Transcribing...
                 </p>
