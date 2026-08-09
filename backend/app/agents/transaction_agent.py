@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DATE_VARIANTS = {"date", "transaction_date", "txn_date", "dt", "timestamp"}
+MONTH_VARIANTS = {"month", "period", "month_period", "billing_period", "statement_period", "monthly"}
 TYPE_VARIANTS = {"type", "transaction_type", "txn_type", "credit_debit", "nature", "debit_credit"}
 AMOUNT_VARIANTS_SET = {"amount", "amt", "value", "transaction_amount", "txn_amount", "amount_usd"}
 DEBIT_COL_VARIANTS = {"debit", "dr", "debit_amount", "withdrawal", "withdrawals"}
@@ -37,6 +38,8 @@ def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
             df = df.rename(columns={col: "debit"})
         elif col in CREDIT_COL_VARIANTS:
             df = df.rename(columns={col: "credit"})
+        elif col in MONTH_VARIANTS:
+            df = df.rename(columns={col: "month"})
     # amount is handled separately via _find_amount_col
     return df
 
@@ -46,7 +49,11 @@ def analyze_transactions(csv_path: str) -> dict:
         return {"error": "transaction data unavailable"}
 
     try:
-        df = pd.read_csv(csv_path)
+        lower = csv_path.lower()
+        if lower.endswith(".xlsx") or lower.endswith(".xls"):
+            df = pd.read_excel(csv_path)
+        else:
+            df = pd.read_csv(csv_path)
     except Exception:
         return {"error": "transaction data unavailable"}
 
@@ -55,6 +62,18 @@ def analyze_transactions(csv_path: str) -> dict:
 
     original_cols = list(df.columns)
     df = _normalise_columns(df)
+
+    # monthly summary format: rows are monthly aggregates keyed by a Month/Period column
+    is_monthly = "date" not in df.columns and "month" in df.columns
+    if is_monthly:
+        try:
+            parsed = pd.to_datetime(df["month"], errors="coerce")
+            df["date"] = parsed.dt.to_period("M").dt.to_timestamp()
+            df = df.dropna(subset=["date"])
+        except Exception:
+            return {"error": "transaction data unavailable"}
+        if df.empty:
+            return {"error": "transaction data unavailable"}
 
     if "date" not in df.columns:
         print(f"[transaction_agent] no date column found; saw columns: {original_cols}", file=sys.stderr)
@@ -184,6 +203,13 @@ def analyze_transactions(csv_path: str) -> dict:
     except Exception:
         trend = "stable"
 
+    if is_monthly:
+        format_notes = f"Detected: monthly summary, {transaction_count} month{'s' if transaction_count != 1 else ''} of data"
+    elif date_range_days is not None:
+        format_notes = f"Detected: daily transaction log, {transaction_count} rows, date range {date_range_days} days"
+    else:
+        format_notes = f"Detected: daily transaction log, {transaction_count} rows"
+
     result = {
         "total_inflow": total_inflow,
         "total_outflow": total_outflow,
@@ -194,6 +220,7 @@ def analyze_transactions(csv_path: str) -> dict:
         "earliest_date": earliest_date,
         "latest_date": latest_date,
         "date_range_days": date_range_days,
+        "format_notes": format_notes,
     }
     if assumptions:
         result["assumptions"] = assumptions

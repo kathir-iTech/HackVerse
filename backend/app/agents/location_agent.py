@@ -7,7 +7,36 @@ import urllib.error
 USER_AGENT = "TheligaiMSMEAssessment/1.0"
 
 
-def verify_location(shop_name: str, address_or_area: str) -> dict:
+def reverse_geocode(lat: float, lon: float) -> dict:
+    try:
+        url = "https://nominatim.openstreetmap.org/reverse?" + urllib.parse.urlencode({
+            "lat": lat,
+            "lon": lon,
+            "format": "json",
+        })
+        time.sleep(1)
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        if data.get("display_name"):
+            return {
+                "location_found": True,
+                "address": data["display_name"],
+                "coordinates": {"lat": lat, "lon": lon},
+            }
+        return {"location_found": False}
+    except Exception:
+        return {"location_found": False, "error": "location lookup unavailable"}
+
+
+def verify_location(
+    shop_name: str,
+    address_or_area: str,
+    lat: float | None = None,
+    lon: float | None = None,
+) -> dict:
+    if lat is not None and lon is not None:
+        return reverse_geocode(lat, lon)
     try:
         query = f"{shop_name} {address_or_area}"
         url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode({

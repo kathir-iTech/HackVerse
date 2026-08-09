@@ -44,6 +44,12 @@ Rules:
     volumes and patterns? E.g. a shop showing minimal inventory but high transaction inflows is a conflict.
   - voice_transactions: Does the tenure and business description from the voice note align with the
     transaction date range, volumes, and trends?
+  - photo_documents: Do the business details in any provided official documents (e.g. GST certificate
+    business name/address) match what is visible in the photos?
+  - voice_documents: Do the details from official documents (business name, address, registration
+    numbers) match what the officer described in the voice note?
+  - transaction_documents: Do the transaction amounts and patterns roughly align with what the
+    bank statement shows?
   If either source in a pair is missing, use "insufficient_data". Otherwise choose "agree" or "conflict"
   based on clear inconsistency — if you're uncertain, prefer "agree".
 - For the onboarding_pathway field: if assessment_band is "Suitable for micro-loan assessment" or
@@ -53,8 +59,22 @@ Rules:
   - Udyam Registration: free MSME registration at udyamregistration.gov.in, no GST needed for turnover under ₹40 lakh, takes 10 minutes with just Aadhaar
   - PM SVANidhi: street vendor working capital loan scheme, no GST needed, loans from ₹10,000-₹50,000
   - MUDRA Shishu: loans up to ₹50,000 for micro enterprises, requires basic savings account
+  - GST Registration: required if annual turnover exceeds ₹20 lakh (services) or ₹40 lakh (goods), at gst.gov.in
+  If has_gst is false and the assessment is suitable, add "Register for GST at gst.gov.in if annual turnover exceeds ₹20 lakh (services) or ₹40 lakh (goods)".
+  If has_udyam is false and the assessment is suitable, add "Register for Udyam at udyamregistration.gov.in — free MSME registration, takes 10 minutes with Aadhaar".
   If assessment_band is "Further assessment required", return an empty list — no premature recommendations.
-  Each step should be one clear sentence: what it is, where to do it, what's needed."""
+  Each step should be one clear sentence: what it is, where to do it, what's needed.
+- For the officer_guidance field: write a 2-3 sentence paragraph addressed directly to the field officer (not the lender),
+  written in plain simple English, telling them specifically what to verify or follow up on based on the evidence gaps
+  and discrepancies found. Example: 'The owner claims 3 years of operation but transaction records only cover 81 days —
+  ask to see older passbook entries or ledger records. Inventory appears well-stocked and consistent. Priority follow-up:
+  verify business tenure with supporting documents.' Never repeat the assessment band values — focus only on actionable next steps.
+- For the reasoning_trace field: provide an object with keys revenue_consistency_reasoning, inventory_observation_reasoning,
+  digital_activity_reasoning — each a single sentence explaining specifically why that band value was chosen based on the
+  evidence provided. Example: 'Revenue Consistency rated Moderate because transaction volatility is high despite positive
+  inflow trend.' Keep each sentence under 20 words.
+- For document_confidence: assess based on how many official documents were provided.
+  "high" if 3 or more documents, "medium" if 1-2 documents, "low" if no documents provided."""
 
 
 def _extract_json_block(raw: str) -> str | None:
@@ -84,6 +104,7 @@ def synthesize_report(
     voice_result: dict | None,
     transaction_result: dict | None,
     rag_context: list,
+    document_result: dict | None = None,
 ) -> dict:
     evidence_parts = []
     missing = []
@@ -112,6 +133,23 @@ def synthesize_report(
             txn_date_info = f" [Transaction records span {transaction_result['date_range_days']} days (from {transaction_result.get('earliest_date', '?')} to {transaction_result.get('latest_date', '?')}).]"
         evidence_parts.append(f"[transactions: {json.dumps(transaction_result)}{txn_date_info}]")
 
+    if document_result and document_result.get("extracted"):
+        doc_extracted = document_result["extracted"]
+        doc_lines = []
+        for doc_type, doc_info in doc_extracted.items():
+            kf = doc_info.get("key_fields", {})
+            doc_lines.append(
+                f"  - {doc_info.get('document_type', doc_type)}: "
+                f"entity={kf.get('entity_name', 'N/A')}, "
+                f"reg_no={kf.get('registration_number', 'N/A')}, "
+                f"address={kf.get('address', 'N/A')}"
+            )
+        evidence_parts.append(
+            "[Official Documents Provided:\n" + "\n".join(doc_lines) + "]"
+        )
+    else:
+        evidence_parts.append("[official documents: none provided]")
+
     rag_block = "\n".join(c["content"] for c in rag_context) if rag_context else "[no RAG context retrieved]"
 
     user_prompt = f"""Available evidence:
@@ -128,10 +166,13 @@ Output strict JSON with these keys:
 - relevant_scheme_note (one sentence referencing the RAG context)
 - assessment_band ("Further assessment required" / "Suitable for micro-loan assessment" / "Suitable for higher assessment range")
 - evidence_summary (list of short evidence strings)
-- missing_inputs (list of strings — which of photos / voice / transactions were missing)
+- missing_inputs (list of strings — which of photos / voice / transactions / documents were missing)
 - discrepancy_flags (list of strings — each describing one cross-source contradiction found, or empty list if none)
-- source_agreement (object with keys photo_voice, photo_transactions, voice_transactions — each valued "agree" / "conflict" / "insufficient_data")
-- onboarding_pathway (list of 2-4 strings — real Indian government scheme onboarding steps, or empty list if assessment_band is "Further assessment required")"""
+- source_agreement (object with keys photo_voice, photo_transactions, voice_transactions, photo_documents, voice_documents, transaction_documents — each valued "agree" / "conflict" / "insufficient_data")
+- onboarding_pathway (list of 2-4 strings — real Indian government scheme onboarding steps, or empty list if assessment_band is "Further assessment required")
+- officer_guidance (a 2-3 sentence plain-language paragraph for the field officer with specific follow-up verification steps — never repeat the band values)
+- reasoning_trace (object with keys revenue_consistency_reasoning, inventory_observation_reasoning, digital_activity_reasoning — one sentence each under 20 words)
+- document_confidence ("high" / "medium" / "low")"""
 
     raw = None
     try:
@@ -141,7 +182,7 @@ Output strict JSON with these keys:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            max_tokens=600,
+            max_tokens=900,
             timeout=30,
         )
         raw = completion.choices[0].message.content
@@ -169,19 +210,28 @@ Output strict JSON with these keys:
         report["evidence_summary"] = [str(report["evidence_summary"])] if report["evidence_summary"] else []
 
     if "source_agreement" in report and not isinstance(report["source_agreement"], dict):
-        report["source_agreement"] = {"photo_voice": "insufficient_data", "photo_transactions": "insufficient_data", "voice_transactions": "insufficient_data"}
+        report["source_agreement"] = {"photo_voice": "insufficient_data", "photo_transactions": "insufficient_data", "voice_transactions": "insufficient_data", "photo_documents": "insufficient_data", "voice_documents": "insufficient_data", "transaction_documents": "insufficient_data"}
 
     report.setdefault("discrepancy_flags", [])
+    report.setdefault("document_confidence", "low")
 
     if "onboarding_pathway" in report and not isinstance(report["onboarding_pathway"], list):
         report["onboarding_pathway"] = []
     report.setdefault("onboarding_pathway", [])
 
-    DEFAULT_AGREEMENT = {"photo_voice": "insufficient_data", "photo_transactions": "insufficient_data", "voice_transactions": "insufficient_data"}
+    if "officer_guidance" in report and not isinstance(report["officer_guidance"], str):
+        report["officer_guidance"] = str(report["officer_guidance"])
+    report.setdefault("officer_guidance", "")
+
+    if "reasoning_trace" in report and not isinstance(report["reasoning_trace"], dict):
+        report["reasoning_trace"] = {}
+    report.setdefault("reasoning_trace", {})
+
+    DEFAULT_AGREEMENT = {"photo_voice": "insufficient_data", "photo_transactions": "insufficient_data", "voice_transactions": "insufficient_data", "photo_documents": "insufficient_data", "voice_documents": "insufficient_data", "transaction_documents": "insufficient_data"}
     if "source_agreement" not in report or not isinstance(report["source_agreement"], dict):
         report["source_agreement"] = dict(DEFAULT_AGREEMENT)
     else:
-        for k in ("photo_voice", "photo_transactions", "voice_transactions"):
+        for k in ("photo_voice", "photo_transactions", "voice_transactions", "photo_documents", "voice_documents", "transaction_documents"):
             if report["source_agreement"].get(k) not in ("agree", "conflict", "insufficient_data"):
                 report["source_agreement"][k] = "insufficient_data"
 
@@ -197,4 +247,6 @@ Output strict JSON with these keys:
                 report[key] = "Further assessment required"
         if report.get("assessment_band") not in ASSESSMENT_VALUES:
             report["assessment_band"] = "Further assessment required"
+        if report.get("document_confidence") not in ("high", "medium", "low"):
+            report["document_confidence"] = "low"
     return report

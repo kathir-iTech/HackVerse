@@ -5,12 +5,14 @@ langchain-community
 langchain-openai
 chromadb
 pypdf
+PyPDF2
 python-multipart
 python-dotenv
 requests
 faster-whisper
 openai
 pandas
+openpyxl
 numpy
 imagehash
 Pillow

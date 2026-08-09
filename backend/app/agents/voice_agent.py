@@ -1,3 +1,6 @@
+import sys
+import shutil
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -7,29 +10,28 @@ import time
 from faster_whisper import WhisperModel
 from openai import OpenAI
 from app.utils.privacy import scrub_pii
+
+if not shutil.which("ffmpeg"):
+    print("[voice_agent] WARNING: ffmpeg not found \u2014 browser recordings in webm/ogg may not transcribe correctly")
+
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 if not OPENROUTER_API_KEY:
     print("ERROR: OPENROUTER_API_KEY environment variable is not set.", file=sys.stderr)
     OPENROUTER_API_KEY = ""
 or_client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
 TEXT_MODEL = "ibm-granite/granite-4.1-8b"
+MIN_TRANSCRIPT_CHARS = 10
 _whisper_model = None
+
+
 def _get_whisper():
     global _whisper_model
     if _whisper_model is None:
         _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
     return _whisper_model
-def process_voice(audio_path: str) -> dict:
-    model = _get_whisper()
-    t0 = time.time()
-    try:
-        segments, _ = model.transcribe(audio_path)
-    except Exception as e:
-        return {"error": "voice processing failed", "detail": str(e)}
-    t1 = time.time()
-    print(f"[voice_agent] whisper transcribe took {t1 - t0:.2f}s", flush=True)
-    transcript = " ".join(seg.text.strip() for seg in segments)
-    transcript_safe = scrub_pii(transcript)
+
+
+def _extract_from_text(transcript_safe: str) -> dict:
     prompt = (
         "Extract ONLY the following if mentioned: business type, "
         "products/services, years operating, location. Do not infer tone, "
@@ -46,8 +48,6 @@ def process_voice(audio_path: str) -> dict:
         )
     except Exception as e:
         return {"error": "voice processing failed", "detail": str(e)}
-    t2 = time.time()
-    print(f"[voice_agent] openrouter extraction took {t2 - t1:.2f}s", flush=True)
     raw = completion.choices[0].message.content
     raw_clean = raw.strip()
     if raw_clean.startswith("```"):
@@ -59,8 +59,53 @@ def process_voice(audio_path: str) -> dict:
         extracted = json.loads(raw_clean)
     except json.JSONDecodeError:
         extracted = {"raw_response": raw}
+    return extracted
+
+
+def process_voice(audio_path: str, language: str | None = None) -> dict:
+    model = _get_whisper()
+    t0 = time.time()
+    try:
+        segments, info = model.transcribe(audio_path, language=language if language else None)
+    except Exception as e:
+        return {"error": "voice processing failed", "detail": str(e)}
+    t1 = time.time()
+    print(f"[voice_agent] whisper transcribe took {t1 - t0:.2f}s", flush=True)
+    transcript = " ".join(seg.text.strip() for seg in segments)
+    if len(transcript.strip()) < MIN_TRANSCRIPT_CHARS:
+        return {
+            "transcription_failed": True,
+            "transcript": "",
+            "language_detected": getattr(info, "language", None),
+            "error": "voice transcription failed or returned no speech",
+        }
+    transcript_safe = scrub_pii(transcript)
+    extracted = _extract_from_text(transcript_safe)
+    if "error" in extracted:
+        return extracted
+    t2 = time.time()
+    print(f"[voice_agent] openrouter extraction took {t2 - t1:.2f}s", flush=True)
     return {
         "transcript_pii_scrubbed": transcript_safe,
         "extracted": extracted,
         "label": "officer observation, unverified",
+        "language_detected": getattr(info, "language", None),
+    }
+
+
+def process_manual_text(text: str) -> dict:
+    if len(text.strip()) < MIN_TRANSCRIPT_CHARS:
+        return {
+            "transcription_failed": True,
+            "transcript": "",
+            "error": "manual field notes too short to extract information",
+        }
+    transcript_safe = scrub_pii(text)
+    extracted = _extract_from_text(transcript_safe)
+    if "error" in extracted:
+        return extracted
+    return {
+        "transcript_pii_scrubbed": transcript_safe,
+        "extracted": extracted,
+        "label": "manual field notes, officer-provided",
     }
