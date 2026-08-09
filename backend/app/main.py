@@ -12,20 +12,11 @@ from io import BytesIO
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form, Header
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 load_dotenv()
-
-OFFICER_PIN = os.getenv("OFFICER_PIN")
-
-
-def verify_officer_pin(x_officer_pin: str | None = Header(None)):
-    if not OFFICER_PIN:
-        return
-    if x_officer_pin != OFFICER_PIN:
-        raise HTTPException(status_code=401, detail="Invalid officer PIN")
 
 from app.rag.retrieve import retrieve
 from app.agents.vision_agent import analyze_photos
@@ -254,7 +245,7 @@ async def _check_photo_hashes(photo_files: list[UploadFile], vendor_name: str) -
         return None
 
 
-@app.post("/report/synthesize", dependencies=[Depends(verify_officer_pin)])
+@app.post("/report/synthesize")
 async def report_synthesize(
     vision_result: str = Form(None),
     voice_result: str = Form(None),
@@ -376,7 +367,7 @@ async def report_synthesize(
     return _finalize_report(report_data, transaction_result, rag_context, timings)
 
 
-@app.post("/report", dependencies=[Depends(verify_officer_pin)])
+@app.post("/report")
 async def report(
     photos: Optional[List[UploadFile]] = File(None),
     voice: Optional[UploadFile] = File(None),
