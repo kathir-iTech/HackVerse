@@ -19,14 +19,6 @@ client = OpenAI(
     api_key=api_key,
 )
 VISION_MODEL = "google/gemini-2.5-flash"
-TEXT_MODEL = "google/gemini-2.5-flash"
-
-DOCUMENT_EXTRACTION_PROMPT = (
-    "Extract all text and key details visible in this official document. "
-    "List: document type, name of business/person, registration numbers, "
-    "dates, validity period, address. Do not interpret or assess — only "
-    "extract what is visibly present."
-)
 
 _DOC_TYPE_HINTS = {
     "gst_certificate": "GST Certificate",
@@ -43,9 +35,23 @@ _BANK_DATE_PATTERN = re.compile(r'\b(?:\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}|\d{4}
 _BANK_AMOUNT_PATTERN = re.compile(r'(?:INR\s*|₹\s*)?[\d,]+(?:\.\d{1,2})?')
 _LICENSE_PATTERN = re.compile(r'[A-Z0-9/\-]{5,20}')
 
+_VISION_STRICT_JSON_PROMPT = (
+    "You are a document data extraction engine. Extract ONLY the fields listed below from this document image. "
+    "Return ONLY a strict JSON object — no markdown, no prose, no explanations. "
+    "If a field is not visible, set it to null. Do not guess or fabricate values.\n\n"
+    "Required JSON keys:\n"
+    '  "document_type": string (one of: "GST Certificate", "Udyam/MSME Certificate", "Bank Statement", '
+    '"Aadhaar Card", "Rent Agreement", "Trade License")\n'
+    '  "extracted_id": string (the registration/license/ID number exactly as shown, or null)\n'
+    '  "business_name": string (name of business or person as shown, or null)\n'
+    '  "issue_date": string (issue/validity date as shown, or null)\n\n'
+    "Example output:\n"
+    '{"document_type": "GST Certificate", "extracted_id": "27AAAAA0000A1Z5", '
+    '"business_name": "Acme Traders Pvt Ltd", "issue_date": "15/06/2023"}'
+)
+
 try:
     import pypdf
-
     _pypdf_available = True
 except ImportError:
     _pypdf_available = False
@@ -67,18 +73,24 @@ def _extract_pdf_text(pdf_path: str) -> str:
     return "\n".join(text_parts)
 
 
-def _describe_document_sync(image_path: str) -> str:
+def _describe_document_sync(image_path: str, strict_json: bool = False) -> dict | str:
     with open(image_path, "rb") as f:
         image_bytes = f.read()
     b64 = __import__("base64").b64encode(image_bytes).decode("utf-8")
     data_uri = f"data:image/jpeg;base64,{b64}"
+    prompt = _VISION_STRICT_JSON_PROMPT if strict_json else (
+        "Extract all text and key details visible in this official document. "
+        "List: document type, name of business/person, registration numbers, "
+        "dates, validity period, address. Do not interpret or assess — only "
+        "extract what is visibly present."
+    )
     completion = client.chat.completions.create(
         model=VISION_MODEL,
         messages=[
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": DOCUMENT_EXTRACTION_PROMPT},
+                    {"type": "text", "text": prompt},
                     {"type": "image_url", "image_url": {"url": data_uri}},
                 ],
             }
@@ -86,41 +98,60 @@ def _describe_document_sync(image_path: str) -> str:
         max_tokens=600,
         timeout=60,
     )
-    return completion.choices[0].message.content
+    raw = completion.choices[0].message.content
+    if strict_json:
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("```")[1]
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:]
+            cleaned = cleaned.strip()
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            return {
+                "document_type": None,
+                "extracted_id": None,
+                "business_name": None,
+                "issue_date": None,
+                "_parse_error": True,
+                "_raw": cleaned[:500],
+            }
+    return raw
 
 
-def _validate_gstin(raw_text: str, key_fields: dict) -> dict:
-    reg_number = key_fields.get("registration_number") or ""
+def _validate_gstin(raw_text: str, key_fields: dict, extraction_tier: str | None = None) -> dict:
+    reg_number = key_fields.get("registration_number") or key_fields.get("extracted_id") or ""
     reg_number = str(reg_number).strip() if reg_number else ""
     if not reg_number:
         return {"verified": False, "reason": "No registration number found in GST certificate"}
     if not _GSTIN_PATTERN.match(reg_number.upper()):
         return {"verified": False, "reason": f"GSTIN format invalid: {reg_number}"}
-    entity_name = key_fields.get("entity_name") or ""
+    entity_name = key_fields.get("entity_name") or key_fields.get("business_name") or ""
     entity_name = str(entity_name).strip() if entity_name else ""
     if not entity_name or len(entity_name) < 2:
         return {"verified": False, "reason": "Entity/business name missing or too short in GST certificate"}
-    if len(raw_text) < 50:
+    if extraction_tier != "tier2_vision" and len(raw_text) < 50:
         return {"verified": False, "reason": "Extracted text too short to be a valid GST certificate"}
     return {"verified": True, "reason": "GSTIN format valid; entity name present; sufficient text extracted"}
 
 
-def _validate_udyam(raw_text: str, key_fields: dict) -> dict:
-    reg_number = key_fields.get("registration_number") or ""
+def _validate_udyam(raw_text: str, key_fields: dict, extraction_tier: str | None = None) -> dict:
+    reg_number = key_fields.get("registration_number") or key_fields.get("extracted_id") or ""
     reg_number = str(reg_number).strip() if reg_number else ""
     if not reg_number:
         return {"verified": False, "reason": "No registration number found in Udyam certificate"}
     if not _UDYAM_PATTERN.match(reg_number.upper()):
         return {"verified": False, "reason": f"Udyam registration number format invalid: {reg_number}"}
-    if len(raw_text) < 50:
+    if extraction_tier != "tier2_vision" and len(raw_text) < 50:
         return {"verified": False, "reason": "Extracted text too short to be a valid Udyam certificate"}
     return {"verified": True, "reason": "Udyam number format valid; sufficient text extracted"}
 
 
-def _validate_bank_statement(raw_text: str, key_fields: dict) -> dict:
+def _validate_bank_statement(raw_text: str, key_fields: dict, extraction_tier: str | None = None) -> dict:
     dates = _BANK_DATE_PATTERN.findall(raw_text)
     amounts = _BANK_AMOUNT_PATTERN.findall(raw_text)
-    if len(dates) < 2:
+    if extraction_tier != "tier2_vision" and len(dates) < 2:
         return {"verified": False, "reason": "Insufficient date entries found for a bank statement"}
     numeric_amounts = []
     for a in amounts:
@@ -130,25 +161,29 @@ def _validate_bank_statement(raw_text: str, key_fields: dict) -> dict:
                 numeric_amounts.append(float(cleaned))
         except ValueError:
             continue
-    if len(numeric_amounts) < 2:
+    if extraction_tier != "tier2_vision" and len(numeric_amounts) < 2:
         return {"verified": False, "reason": "Insufficient monetary amounts found for a bank statement"}
-    entity_name = key_fields.get("entity_name") or ""
+    entity_name = key_fields.get("entity_name") or key_fields.get("business_name") or ""
     entity_name = str(entity_name).strip() if entity_name else ""
     if not entity_name:
         return {"verified": False, "reason": "Account holder name missing in bank statement"}
+    if extraction_tier == "tier2_vision":
+        return {"verified": True, "reason": "Bank statement fields extracted via vision; manual review recommended for full validation"}
     return {"verified": True, "reason": f"Bank statement contains {len(dates)} date entries and {len(numeric_amounts)} amount entries"}
 
 
-def _validate_trade_license(raw_text: str, key_fields: dict) -> dict:
-    reg_number = key_fields.get("registration_number") or ""
+def _validate_trade_license(raw_text: str, key_fields: dict, extraction_tier: str | None = None) -> dict:
+    reg_number = key_fields.get("registration_number") or key_fields.get("extracted_id") or ""
     reg_number = str(reg_number).strip() if reg_number else ""
     if not reg_number:
         return {"verified": False, "reason": "No license number found in trade license document"}
     if not _LICENSE_PATTERN.match(reg_number.upper()):
         return {"verified": False, "reason": f"License number format unrecognised: {reg_number}"}
     dates = _BANK_DATE_PATTERN.findall(raw_text)
-    if len(dates) < 1:
+    if extraction_tier != "tier2_vision" and len(dates) < 1:
         return {"verified": False, "reason": "No validity dates found in trade license"}
+    if extraction_tier == "tier2_vision":
+        return {"verified": True, "reason": "Trade license fields extracted via vision; manual review recommended for full validation"}
     return {"verified": True, "reason": "License number present; validity dates found"}
 
 
@@ -160,49 +195,28 @@ _VERIFIERS = {
 }
 
 
-def _process_single_document(doc_type: str, doc_path: str) -> dict:
-    filename = os.path.basename(doc_path)
-    ext = os.path.splitext(filename)[1].lower()
-    raw_text = ""
-    is_pdf = ext == ".pdf"
-    error_msg = None
-
-    if is_pdf:
-        if not _pypdf_available:
-            return {
-                "raw_text": "",
-                "document_type": _DOC_TYPE_HINTS.get(doc_type, doc_type),
-                "key_fields": {},
-                "verified": False,
-                "verification_reason": "PDF processing unavailable (pypdf not installed)",
-                "error": "PDF processing unavailable (pypdf not installed)",
-            }
+def _run_verifier(doc_type: str, raw_text: str, key_fields: dict, extraction_tier: str | None = None) -> dict:
+    verifier = _VERIFIERS.get(doc_type)
+    verification = {"verified": False, "reason": "No verifier defined for this document type"}
+    if verifier:
         try:
-            raw_text = _extract_pdf_text(doc_path)
+            verification = verifier(raw_text, key_fields, extraction_tier)
         except Exception as e:
-            return {
-                "raw_text": "",
-                "document_type": _DOC_TYPE_HINTS.get(doc_type, doc_type),
-                "key_fields": {},
-                "verified": False,
-                "verification_reason": f"PDF extraction failed: {str(e)}",
-                "error": f"PDF extraction failed: {str(e)}",
-            }
-    else:
-        try:
-            raw_text = _describe_document_sync(doc_path)
-        except Exception as e:
-            return {
-                "raw_text": "",
-                "document_type": _DOC_TYPE_HINTS.get(doc_type, doc_type),
-                "key_fields": {},
-                "verified": False,
-                "verification_reason": f"Vision extraction failed: {str(e)}",
-                "error": f"Vision extraction failed: {str(e)}",
-            }
+            verification = {"verified": False, "reason": f"Verification error: {str(e)}"}
+    return verification
 
-    scrubbed = scrub_pii(raw_text)
 
+def _tier1_pdf(doc_type: str, doc_path: str) -> tuple[str, dict] | None:
+    if not _pypdf_available:
+        return None
+    try:
+        raw_text = _extract_pdf_text(doc_path)
+    except Exception:
+        return None
+    if not raw_text or not raw_text.strip():
+        return None
+    if len(raw_text) < 20:
+        return None
     key_fields = {}
     try:
         field_prompt = (
@@ -211,10 +225,10 @@ def _process_single_document(doc_type: str, doc_path: str) -> dict:
             "extract key structured fields. Return ONLY a JSON object with keys: "
             "document_type, entity_name, registration_number, dates, validity_period, address. "
             "Use null for missing fields. Do not add extra text.\n\n"
-            f"Text:\n{scrubbed[:3000]}"
+            f"Text:\n{raw_text[:3000]}"
         )
         completion = client.chat.completions.create(
-            model=TEXT_MODEL,
+            model=VISION_MODEL,
             messages=[{"role": "user", "content": field_prompt}],
             max_tokens=300,
             timeout=30,
@@ -231,28 +245,100 @@ def _process_single_document(doc_type: str, doc_path: str) -> dict:
             key_fields = {"raw_response": raw_fields}
     except Exception:
         key_fields = {}
+    return raw_text, key_fields
 
-    verifier = _VERIFIERS.get(doc_type)
-    verification = {"verified": False, "reason": "No verifier defined for this document type"}
-    if verifier:
+
+def _tier2_vision(doc_type: str, doc_path: str) -> tuple[str, dict]:
+    structured = _describe_document_sync(doc_path, strict_json=True)
+    if isinstance(structured, dict) and structured.get("_parse_error"):
+        raw_text = scrub_pii(structured.get("_raw", "") or "")
+        key_fields = {"raw_response": structured.get("_raw", "")}
+        return raw_text, key_fields
+    if not isinstance(structured, dict):
+        raw_text = scrub_pii(str(structured))
+        return raw_text, {}
+    extracted_id = structured.get("extracted_id") or ""
+    business_name = structured.get("business_name") or ""
+    issue_date = structured.get("issue_date") or ""
+    raw_text_parts = []
+    if extracted_id:
+        raw_text_parts.append(f"Registration/ID: {extracted_id}")
+    if business_name:
+        raw_text_parts.append(f"Business/Person: {business_name}")
+    if issue_date:
+        raw_text_parts.append(f"Issue/Validity Date: {issue_date}")
+    raw_text = scrub_pii("\n".join(raw_text_parts)) if raw_text_parts else ""
+    key_fields = {
+        "document_type": structured.get("document_type"),
+        "registration_number": extracted_id if extracted_id else None,
+        "entity_name": business_name if business_name else None,
+        "dates": issue_date if issue_date else None,
+    }
+    return raw_text, key_fields
+
+
+def _process_single_document(doc_type: str, doc_path: str) -> dict:
+    filename = os.path.basename(doc_path)
+    ext = os.path.splitext(filename)[1].lower()
+    is_pdf = ext == ".pdf"
+    tier_used = None
+    raw_text = ""
+    key_fields = {}
+    error_msg = None
+
+    if is_pdf:
+        tier1 = _tier1_pdf(doc_type, doc_path)
+        if tier1 is not None:
+            raw_text, key_fields = tier1
+            tier_used = "tier1_pdf"
+        else:
+            tier_used = "tier2_vision"
+            try:
+                raw_text, key_fields = _tier2_vision(doc_type, doc_path)
+            except Exception as e:
+                return {
+                    "raw_text": "",
+                    "document_type": _DOC_TYPE_HINTS.get(doc_type, doc_type),
+                    "key_fields": {},
+                    "verified": False,
+                    "verification_reason": f"Vision fallback failed: {str(e)}",
+                    "error": f"Vision fallback failed: {str(e)}",
+                    "extraction_tier": None,
+                }
+    else:
+        tier_used = "tier2_vision"
         try:
-            verification = verifier(scrubbed, key_fields)
+            raw_text, key_fields = _tier2_vision(doc_type, doc_path)
         except Exception as e:
-            verification = {"verified": False, "reason": f"Verification error: {str(e)}"}
+            return {
+                "raw_text": "",
+                "document_type": _DOC_TYPE_HINTS.get(doc_type, doc_type),
+                "key_fields": {},
+                "verified": False,
+                "verification_reason": f"Vision extraction failed: {str(e)}",
+                "error": f"Vision extraction failed: {str(e)}",
+                "extraction_tier": None,
+            }
+
+    verification = _run_verifier(doc_type, raw_text, key_fields, tier_used)
 
     return {
-        "raw_text": scrubbed,
+        "raw_text": raw_text,
         "document_type": _DOC_TYPE_HINTS.get(doc_type, doc_type),
         "key_fields": key_fields,
         "verified": verification.get("verified", False),
         "verification_reason": verification.get("reason", ""),
+        "extraction_tier": tier_used,
     }
 
 
 def process_documents(doc_paths: dict) -> dict:
     """
-    Process optional official documents. Returns extraction results
-    and verification signals. Never raises — always returns a dict.
+    Process optional official documents using a low-memory 2-tier pipeline:
+      Tier 1: pypdf digital text extraction + regex validation.
+      Tier 2: Cloud vision fallback for scanned images/photos (no local OCR).
+
+    Never raises. Always returns a dict with verified flags.
     """
     documents_processed = []
     documents_missing = []
@@ -305,6 +391,7 @@ def process_documents(doc_paths: dict) -> dict:
                     "verified": False,
                     "verification_reason": str(e),
                     "error": str(e),
+                    "extraction_tier": None,
                 }
 
         verified_count = sum(
