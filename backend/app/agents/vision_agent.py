@@ -3,6 +3,7 @@ load_dotenv()
 
 import os
 import sys
+import asyncio
 import base64
 from openai import OpenAI
 
@@ -39,7 +40,7 @@ SUMMARY_PROMPT_PREFIX = (
 )
 
 
-def _describe_image(image_path: str) -> str:
+def _describe_image_sync(image_path: str) -> str:
     with open(image_path, "rb") as f:
         image_bytes = f.read()
     b64 = base64.b64encode(image_bytes).decode("utf-8")
@@ -56,26 +57,51 @@ def _describe_image(image_path: str) -> str:
             }
         ],
         max_tokens=300,
+        timeout=30,
     )
     return completion.choices[0].message.content
 
 
-def analyze_photos(image_paths: list[str]) -> dict:
+async def _describe_image(image_path: str) -> str:
+    return await asyncio.to_thread(_describe_image_sync, image_path)
+
+
+def _summarize(combined: str) -> str:
+    completion = client.chat.completions.create(
+        model=TEXT_MODEL,
+        messages=[{"role": "user", "content": SUMMARY_PROMPT_PREFIX + combined}],
+        max_tokens=300,
+        timeout=30,
+    )
+    return completion.choices[0].message.content
+
+
+async def analyze_photos(image_paths: list[str]) -> dict:
+    tasks = [_describe_image(path) for path in image_paths]
+    descriptions = await asyncio.gather(*tasks, return_exceptions=True)
+
     per_image = []
-    for path in image_paths:
-        try:
-            desc = _describe_image(path)
-        except Exception as e:
-            return {"error": "vision processing failed", "detail": str(e)}
-        per_image.append({"file": os.path.basename(path), "description": desc})
+    failures = []
+    for path, result in zip(image_paths, descriptions):
+        if isinstance(result, Exception):
+            failures.append(result)
+            per_image.append({
+                "file": os.path.basename(path),
+                "description": None,
+                "error": "vision processing failed",
+                "detail": str(result),
+            })
+        else:
+            per_image.append({"file": os.path.basename(path), "description": result})
+
+    successful = [d for d in per_image if "error" not in d]
+    if not successful:
+        detail = str(failures[0]) if failures else "no images could be described"
+        return {"error": "vision processing failed", "detail": detail}
+
     try:
-        combined = "\n".join(f"- {d['description']}" for d in per_image)
-        completion = client.chat.completions.create(
-            model=TEXT_MODEL,
-            messages=[{"role": "user", "content": SUMMARY_PROMPT_PREFIX + combined}],
-            max_tokens=300,
-        )
-        summary = completion.choices[0].message.content
+        combined = "\n".join(f"- {d['description']}" for d in successful)
+        summary = await asyncio.to_thread(_summarize, combined)
     except Exception as e:
         return {"error": "vision processing failed", "detail": str(e)}
     return {"per_image": per_image, "summary": summary}

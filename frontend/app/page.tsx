@@ -57,6 +57,7 @@ interface Report {
     indicators_triggered: number;
     risk_summary: string;
   };
+  onboarding_pathway?: string[];
 }
 
 const AGREEMENT_COLORS: Record<string, string> = {
@@ -359,7 +360,7 @@ export default function Page() {
             <p className={`mt-2 text-sm font-medium ${report.risk_indicators.indicators_triggered === 0 ? "text-emerald-700" : "text-amber-800"}`}>
               {report.risk_indicators.risk_summary}
             </p>
-            {report.risk_indicators.indicators_triggered > 0 && (
+            {report.risk_indicators.indicators && typeof report.risk_indicators.indicators === "object" && report.risk_indicators.indicators_triggered > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {report.risk_indicators.indicators.high_transaction_volatility && (
                   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
@@ -413,12 +414,29 @@ export default function Page() {
             <p className="mt-1 text-lg font-semibold text-indigo-900">{report.assessment_band}</p>
           </div>
 
+          {/* Onboarding Pathway */}
+          {Array.isArray(report.onboarding_pathway) && report.onboarding_pathway.length > 0 && (
+            <div className="bg-blue-50 rounded-xl border border-blue-200 p-5">
+              <span className="text-xs font-medium text-blue-500 uppercase tracking-wide">Onboarding Pathway</span>
+              <p className="mt-1 text-base font-semibold text-blue-900">Recommended Next Steps for This Vendor</p>
+              <p className="text-xs text-blue-500 mt-0.5">These steps help this vendor become eligible for formal credit disbursement.</p>
+              <ul className="mt-3 space-y-1.5">
+                {report.onboarding_pathway.map((step, i) => (
+                  <li key={i} className="text-sm text-blue-900 flex gap-2">
+                    <span className="text-blue-400 mt-0.5 shrink-0">→</span>
+                    <span>{step}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Vendor history */}
           {vendorHistory && vendorHistory.length > 0 && report.vendor_name && (
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
               <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Assessment History for {report.vendor_name}</span>
               <div className="mt-3 space-y-1.5 text-sm">
-                {vendorHistory.map((entry, i) => {
+                {(Array.isArray(vendorHistory) ? vendorHistory : []).map((entry, i) => {
                   const trend = i === vendorHistory.length - 1 ? "Stable" : bandTrend(report.assessment_band, entry.assessment_band);
                   const trendColor = trend === "Improved" ? "text-emerald-600" : trend === "Declined" ? "text-red-600" : "text-slate-400";
                   const trendArrow = trend === "Improved" ? "↑" : trend === "Declined" ? "↓" : "→";
@@ -570,7 +588,7 @@ export default function Page() {
             <div className="bg-amber-50 rounded-xl border border-amber-200 p-5">
               <span className="text-xs font-medium text-amber-700 uppercase tracking-wide">Needs Officer Review</span>
               <ul className="mt-2 space-y-1">
-                {report.discrepancy_flags && report.discrepancy_flags.map((s, i) => (
+                {(Array.isArray(report.discrepancy_flags) ? report.discrepancy_flags : []).map((s, i) => (
                   <li key={i} className="text-sm text-amber-800 flex gap-2">
                     <span className="text-amber-400 mt-0.5 shrink-0">•</span>
                     <span>{s}</span>
@@ -590,7 +608,7 @@ export default function Page() {
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
             <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Scheme Note</span>
             <p className="mt-2 text-sm text-slate-700 leading-relaxed">{report.relevant_scheme_note}</p>
-            {report.sources_cited && report.sources_cited.length > 0 && (
+            {(Array.isArray(report.sources_cited) ? report.sources_cited : []).length > 0 && (
               <p className="mt-3 text-[11px] text-slate-400">
                 Sources referenced: {report.sources_cited.join(", ")}
               </p>
@@ -601,7 +619,7 @@ export default function Page() {
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
             <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Evidence Summary</span>
             <ul className="mt-2 space-y-1">
-              {(report.evidence_summary ?? []).map((s, i) => (
+              {(Array.isArray(report.evidence_summary) ? report.evidence_summary : []).map((s, i) => (
                 <li key={i} className="text-sm text-slate-700 flex gap-2">
                   <span className="text-slate-300 mt-0.5 shrink-0">•</span>
                   <span>{s}</span>
@@ -622,6 +640,9 @@ export default function Page() {
           )}
 
           {/* Footer */}
+          <p className="text-[11px] text-slate-400 text-center">
+            🔒 Voice data PII-masked before AI processing (DPDPA 2023)
+          </p>
           <p className="text-[11px] text-slate-300 text-center">
             This report was generated by an AI pipeline. All outputs should be verified by a field officer before decision-making.
           </p>

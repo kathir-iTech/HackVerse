@@ -125,7 +125,7 @@ async def agents_vision(files: List[UploadFile] = File(...)):
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 shutil.copyfileobj(f.file, tmp)
                 temp_paths.append(tmp.name)
-        return analyze_photos(temp_paths)
+        return await analyze_photos(temp_paths)
     finally:
         for p in temp_paths:
             os.remove(p)
@@ -160,7 +160,10 @@ async def _run_agent(
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 shutil.copyfileobj(f.file, tmp)
                 path = tmp.name
-            result = await asyncio.to_thread(handler, path)
+            if asyncio.iscoroutinefunction(handler):
+                result = await handler(path)
+            else:
+                result = await asyncio.to_thread(handler, path)
             paths.append(path)
         else:
             for f in files_data:
@@ -168,7 +171,10 @@ async def _run_agent(
                 with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                     shutil.copyfileobj(f.file, tmp)
                     paths.append(tmp.name)
-            result = await asyncio.to_thread(handler, paths)
+            if asyncio.iscoroutinefunction(handler):
+                result = await handler(paths)
+            else:
+                result = await asyncio.to_thread(handler, paths)
         return result
     finally:
         for p in paths:

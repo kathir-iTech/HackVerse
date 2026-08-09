@@ -6,6 +6,7 @@ import json
 import time
 from faster_whisper import WhisperModel
 from openai import OpenAI
+from app.utils.privacy import scrub_pii
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 if not OPENROUTER_API_KEY:
     print("ERROR: OPENROUTER_API_KEY environment variable is not set.", file=sys.stderr)
@@ -28,18 +29,20 @@ def process_voice(audio_path: str) -> dict:
     t1 = time.time()
     print(f"[voice_agent] whisper transcribe took {t1 - t0:.2f}s", flush=True)
     transcript = " ".join(seg.text.strip() for seg in segments)
+    transcript_safe = scrub_pii(transcript)
     prompt = (
         "Extract ONLY the following if mentioned: business type, "
         "products/services, years operating, location. Do not infer tone, "
         "confidence, honesty, or emotional state. Return strict JSON with "
         "keys business_type, products, years_operating, location. Omit a "
-        "key entirely if not mentioned.\n\nTranscript:\n" + transcript
+        "key entirely if not mentioned.\n\nTranscript:\n" + transcript_safe
     )
     try:
         completion = or_client.chat.completions.create(
             model=TEXT_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=300,
+            timeout=30,
         )
     except Exception as e:
         return {"error": "voice processing failed", "detail": str(e)}
@@ -58,6 +61,7 @@ def process_voice(audio_path: str) -> dict:
         extracted = {"raw_response": raw}
     return {
         "transcript": transcript,
+        "transcript_pii_scrubbed": transcript_safe,
         "extracted": extracted,
         "label": "officer observation, unverified",
     }
