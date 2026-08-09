@@ -131,7 +131,7 @@ def _validate_gstin(raw_text: str, key_fields: dict, extraction_tier: str | None
     entity_name = str(entity_name).strip() if entity_name else ""
     if not entity_name or len(entity_name) < 2:
         return {"verified": False, "reason": "Entity/business name missing or too short in GST certificate"}
-    if extraction_tier != "tier2_vision" and len(raw_text) < 50:
+    if extraction_tier != "tier2_vision" and len(raw_text) < 15:
         return {"verified": False, "reason": "Extracted text too short to be a valid GST certificate"}
     return {"verified": True, "reason": "GSTIN format valid; entity name present; sufficient text extracted"}
 
@@ -143,7 +143,7 @@ def _validate_udyam(raw_text: str, key_fields: dict, extraction_tier: str | None
         return {"verified": False, "reason": "No registration number found in Udyam certificate"}
     if not _UDYAM_PATTERN.match(reg_number.upper()):
         return {"verified": False, "reason": f"Udyam registration number format invalid: {reg_number}"}
-    if extraction_tier != "tier2_vision" and len(raw_text) < 50:
+    if extraction_tier != "tier2_vision" and len(raw_text) < 15:
         return {"verified": False, "reason": "Extracted text too short to be a valid Udyam certificate"}
     return {"verified": True, "reason": "Udyam number format valid; sufficient text extracted"}
 
@@ -215,7 +215,7 @@ def _tier1_pdf(doc_type: str, doc_path: str) -> tuple[str, dict] | None:
         return None
     if not raw_text or not raw_text.strip():
         return None
-    if len(raw_text) < 20:
+    if len(raw_text) < 15:
         return None
     key_fields = {}
     try:
