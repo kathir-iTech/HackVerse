@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001/report";
 const API_BASE = API.replace(/\/report$/, "");
@@ -229,7 +229,10 @@ export default function Page() {
   }, [loading]);
 
   const canSubmit = photos.length > 0 || audio !== null || csv !== null || Object.values(documents).some(Boolean);
-  const authHeaders = pin ? { "X-Officer-Pin": pin } : {};
+  const authHeaders: Record<string, string> = useMemo(() => {
+    if (!pin) return {};
+    return { "X-Officer-Pin": pin };
+  }, [pin]);
   const handleAuthFailure = useCallback(() => {
     setPin("");
     setPinError(true);
