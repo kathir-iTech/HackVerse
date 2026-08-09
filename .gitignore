@@ -34,3 +34,9 @@ results.txt
 
 # Report cache
 backend/report_cache/
+
+# Photo hash store
+backend/photo_hashes/
+
+# Generated audit docs
+ONSITE_COMPETITIVE_AUDIT.md
