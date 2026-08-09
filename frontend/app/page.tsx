@@ -189,6 +189,7 @@ export default function Page() {
   const [hasSavingsAccount, setHasSavingsAccount] = useState("");
   const [annualTurnover, setAnnualTurnover] = useState("");
   const [udyamNumber, setUdyamNumber] = useState("");
+  const [formData, setFormData] = useState<FormData>(new FormData());
   const [documents, setDocuments] = useState<Record<string, File | null>>({
     gst_certificate: null,
     udyam_certificate: null,
