@@ -229,9 +229,12 @@ export default function Page() {
   }, [loading]);
 
   const canSubmit = photos.length > 0 || audio !== null || csv !== null || Object.values(documents).some(Boolean);
-  const authHeaders: Record<string, string> = useMemo(() => {
-    if (!pin) return {};
-    return { "X-Officer-Pin": pin };
+  const authHeaders = useMemo<Record<string, string>>(() => {
+    const headers: Record<string, string> = {};
+    if (pin) {
+      headers["X-Officer-Pin"] = pin;
+    }
+    return headers;
   }, [pin]);
   const handleAuthFailure = useCallback(() => {
     setPin("");
