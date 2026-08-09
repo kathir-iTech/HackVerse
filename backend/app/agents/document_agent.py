@@ -30,10 +30,50 @@ _DOC_TYPE_HINTS = {
 }
 
 _GSTIN_PATTERN = re.compile(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9][Z][A-Z0-9]$')
-_UDYAM_PATTERN = re.compile(r'^UDYAM-[0-9]{2}-[0-9]{2}-[0-9]{7}$')
+_UDYAM_PATTERN = re.compile(r'^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$')
 _BANK_DATE_PATTERN = re.compile(r'\b(?:\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}|\d{4}[/\-\.]\d{1,2}[/\-\.]\d{1,2})\b')
 _BANK_AMOUNT_PATTERN = re.compile(r'(?:INR\s*|₹\s*)?[\d,]+(?:\.\d{1,2})?')
 _LICENSE_PATTERN = re.compile(r'[A-Z0-9/\-]{5,20}')
+
+
+def _char_to_val(ch: str) -> int:
+    if ch.isdigit():
+        return int(ch)
+    return ord(ch.upper()) - ord("A") + 10
+
+
+def _val_to_char(val: int) -> str:
+    if val < 10:
+        return str(val)
+    return chr(ord("A") + val - 10)
+
+
+def _gstin_checksum(gstin_14: str) -> str | None:
+    if len(gstin_14) != 14:
+        return None
+    total = 0
+    for i, ch in enumerate(gstin_14, start=1):
+        try:
+            val = _char_to_val(ch)
+        except (ValueError, TypeError):
+            return None
+        total += val * i
+    remainder = total % 36
+    return _val_to_char(remainder)
+
+
+def _validate_gstin_checksum(reg_number: str) -> tuple[bool, str | None]:
+    reg_number = str(reg_number).strip().upper()
+    if not _GSTIN_PATTERN.match(reg_number):
+        return False, f"GSTIN format invalid: {reg_number}"
+    gstin_14 = reg_number[:14]
+    expected_check_char = reg_number[14]
+    computed_check = _gstin_checksum(gstin_14)
+    if computed_check is None:
+        return False, f"GSTIN checksum calculation failed for: {reg_number}"
+    if computed_check != expected_check_char:
+        return False, f"GSTIN checksum mismatch for {reg_number}: expected {expected_check_char}, computed {computed_check}"
+    return True, None
 
 _VISION_STRICT_JSON_PROMPT = (
     "You are a document data extraction engine. Extract ONLY the fields listed below from this document image. "
@@ -124,28 +164,31 @@ def _validate_gstin(raw_text: str, key_fields: dict, extraction_tier: str | None
     reg_number = key_fields.get("registration_number") or key_fields.get("extracted_id") or ""
     reg_number = str(reg_number).strip() if reg_number else ""
     if not reg_number:
-        return {"verified": False, "reason": "No registration number found in GST certificate"}
+        return {"verified": False, "reason": "No registration number found in GST certificate", "flag": "missing_gstin"}
     if not _GSTIN_PATTERN.match(reg_number.upper()):
-        return {"verified": False, "reason": f"GSTIN format invalid: {reg_number}"}
+        return {"verified": False, "reason": f"GSTIN format invalid: {reg_number}", "flag": "invalid_gstin_checksum"}
+    checksum_ok, checksum_err = _validate_gstin_checksum(reg_number)
+    if not checksum_ok:
+        return {"verified": False, "reason": f"GSTIN checksum invalid: {checksum_err}", "flag": "invalid_gstin_checksum"}
     entity_name = key_fields.get("entity_name") or key_fields.get("business_name") or ""
     entity_name = str(entity_name).strip() if entity_name else ""
     if not entity_name or len(entity_name) < 2:
-        return {"verified": False, "reason": "Entity/business name missing or too short in GST certificate"}
+        return {"verified": False, "reason": "Entity/business name missing or too short in GST certificate", "flag": "invalid_gstin_checksum"}
     if extraction_tier != "tier2_vision" and len(raw_text) < 15:
-        return {"verified": False, "reason": "Extracted text too short to be a valid GST certificate"}
-    return {"verified": True, "reason": "GSTIN format valid; entity name present; sufficient text extracted"}
+        return {"verified": False, "reason": "Extracted text too short to be a valid GST certificate", "flag": "invalid_gstin_checksum"}
+    return {"verified": True, "reason": "GSTIN format valid; entity name present; sufficient text extracted", "flag": None}
 
 
 def _validate_udyam(raw_text: str, key_fields: dict, extraction_tier: str | None = None) -> dict:
     reg_number = key_fields.get("registration_number") or key_fields.get("extracted_id") or ""
     reg_number = str(reg_number).strip() if reg_number else ""
     if not reg_number:
-        return {"verified": False, "reason": "No registration number found in Udyam certificate"}
+        return {"verified": False, "reason": "No registration number found in Udyam certificate", "flag": "invalid_udyam_format"}
     if not _UDYAM_PATTERN.match(reg_number.upper()):
-        return {"verified": False, "reason": f"Udyam registration number format invalid: {reg_number}"}
+        return {"verified": False, "reason": f"Udyam registration number format invalid: {reg_number}", "flag": "invalid_udyam_format"}
     if extraction_tier != "tier2_vision" and len(raw_text) < 15:
-        return {"verified": False, "reason": "Extracted text too short to be a valid Udyam certificate"}
-    return {"verified": True, "reason": "Udyam number format valid; sufficient text extracted"}
+        return {"verified": False, "reason": "Extracted text too short to be a valid Udyam certificate", "flag": "invalid_udyam_format"}
+    return {"verified": True, "reason": "Udyam number format valid; sufficient text extracted", "flag": None}
 
 
 def _validate_bank_statement(raw_text: str, key_fields: dict, extraction_tier: str | None = None) -> dict:
@@ -197,12 +240,14 @@ _VERIFIERS = {
 
 def _run_verifier(doc_type: str, raw_text: str, key_fields: dict, extraction_tier: str | None = None) -> dict:
     verifier = _VERIFIERS.get(doc_type)
-    verification = {"verified": False, "reason": "No verifier defined for this document type"}
+    verification = {"verified": False, "reason": "No verifier defined for this document type", "flag": None}
     if verifier:
         try:
             verification = verifier(raw_text, key_fields, extraction_tier)
         except Exception as e:
-            verification = {"verified": False, "reason": f"Verification error: {str(e)}"}
+            verification = {"verified": False, "reason": f"Verification error: {str(e)}", "flag": "verification_error"}
+    if "flag" not in verification:
+        verification["flag"] = None
     return verification
 
 
@@ -328,6 +373,7 @@ def _process_single_document(doc_type: str, doc_path: str) -> dict:
         "key_fields": key_fields,
         "verified": verification.get("verified", False),
         "verification_reason": verification.get("reason", ""),
+        "flag": verification.get("flag"),
         "extraction_tier": tier_used,
     }
 

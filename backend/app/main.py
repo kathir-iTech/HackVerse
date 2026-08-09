@@ -533,6 +533,7 @@ def _sanitize_document_analysis(document_result: dict | None) -> dict | None:
                 "key_fields": info.get("key_fields", {}),
                 "verified": info.get("verified", False),
                 "verification_reason": info.get("verification_reason", ""),
+                "flag": info.get("flag"),
             }
         else:
             sanitized["extracted"][doc_type] = info

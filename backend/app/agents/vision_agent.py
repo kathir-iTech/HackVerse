@@ -62,6 +62,41 @@ def _describe_image_sync(image_path: str) -> str:
     return completion.choices[0].message.content
 
 
+BLANK_IMAGE_TERMS = (
+    "blank",
+    "blank screen",
+    "empty screen",
+    "no image",
+    "no visible",
+    "no content",
+    "no objects",
+    "no discernible",
+    "uniform color",
+    "solid color",
+    "out of focus",
+    "blurry",
+    "abstract texture",
+    "no commercial",
+    "no inventory",
+    "no shop",
+    "no products",
+    "no retail",
+    "no stock",
+    "no merchandise",
+    "unintelligible",
+)
+
+
+def _classify_usable_evidence(description: str) -> tuple[bool, str | None]:
+    if not description or not description.strip():
+        return False, "blank_photo_evidence"
+    lower = description.lower()
+    for term in BLANK_IMAGE_TERMS:
+        if term in lower:
+            return False, "blank_photo_evidence"
+    return True, None
+
+
 async def _describe_image(image_path: str) -> str:
     return await asyncio.to_thread(_describe_image_sync, image_path)
 
@@ -88,16 +123,31 @@ async def analyze_photos(image_paths: list[str]) -> dict:
             per_image.append({
                 "file": os.path.basename(path),
                 "description": None,
+                "usable_evidence": False,
+                "invalid_photo_evidence": "vision processing failed",
                 "error": "vision processing failed",
                 "detail": str(result),
             })
         else:
-            per_image.append({"file": os.path.basename(path), "description": result})
+            usable, flag = _classify_usable_evidence(result)
+            entry: dict = {
+                "file": os.path.basename(path),
+                "description": result,
+                "usable_evidence": usable,
+            }
+            if not usable:
+                entry["invalid_photo_evidence"] = flag
+            per_image.append(entry)
 
-    successful = [d for d in per_image if "error" not in d]
+    successful = [d for d in per_image if "error" not in d and d.get("usable_evidence")]
     if not successful:
-        detail = str(failures[0]) if failures else "no images could be described"
-        return {"error": "vision processing failed", "detail": detail}
+        detail = str(failures[0]) if failures else "no usable images could be described"
+        return {
+            "error": "vision processing failed",
+            "detail": detail,
+            "usable_evidence": False,
+            "invalid_photo_evidence": "blank_photo_evidence",
+        }
 
     try:
         combined = "\n".join(f"- {d['description']}" for d in successful)

@@ -73,11 +73,11 @@ def compute_cross_verification(
 ) -> list[str]:
     flags = []
     if not transaction_result or "error" in transaction_result:
-        return flags
+        pass
 
-    total_inflow = transaction_result.get("total_inflow", 0) or 0
-    transaction_count = transaction_result.get("transaction_count", 0) or 0
-    txn_trend = transaction_result.get("trend", "") or ""
+    total_inflow = transaction_result.get("total_inflow", 0) or 0 if transaction_result else 0
+    transaction_count = transaction_result.get("transaction_count", 0) or 0 if transaction_result else 0
+    txn_trend = transaction_result.get("trend", "") or "" if transaction_result else ""
 
     vision_inventory = _extract_vision_inventory_level(vision_result)
     if vision_inventory == "low" and total_inflow > 500000:
@@ -120,7 +120,7 @@ def compute_cross_verification(
 
     voice_extracted = voice_result.get("extracted", {}) if voice_result else {}
     claimed_tenure = voice_extracted.get("years_operating") if isinstance(voice_extracted, dict) else None
-    if claimed_tenure and transaction_result.get("date_range_days"):
+    if claimed_tenure and transaction_result and transaction_result.get("date_range_days"):
         try:
             claimed_days = float(claimed_tenure) * 365
             actual_days = float(transaction_result["date_range_days"])
@@ -133,6 +133,33 @@ def compute_cross_verification(
                 )
         except (ValueError, TypeError):
             pass
+
+    if document_result:
+        ver_signals = document_result.get("verification_signals", {})
+        has_unverified = False
+        for doc_type, info in document_result.get("extracted", {}).items():
+            if isinstance(info, dict) and not info.get("verified", False):
+                has_unverified = True
+                break
+        if has_unverified or any(
+            info.get("flag") in ("invalid_gstin_checksum", "invalid_udyam_format")
+            for info in document_result.get("extracted", {}).values()
+            if isinstance(info, dict)
+        ):
+            flags.append(
+                "Invalid or unverified GSTIN/Udyam identifier provided in document submission."
+            )
+
+    if vision_result and not vision_result.get("error"):
+        per_image = vision_result.get("per_image", [])
+        has_unusable = any(
+            isinstance(img, dict) and img.get("invalid_photo_evidence") == "blank_photo_evidence"
+            for img in per_image
+        )
+        if has_unusable or vision_result.get("invalid_photo_evidence") == "blank_photo_evidence":
+            flags.append(
+                "Uploaded shop photos do not show a recognizable retail or commercial inventory environment."
+            )
 
     return flags
 
