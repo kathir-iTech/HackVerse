@@ -169,7 +169,7 @@ export default function Page() {
   const [activeStep, setActiveStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [visionFill, setVisionFill] = useState(0);
   const [troubleExpanded, setTroubleExpanded] = useState(false);
-  const [retryFocus, setRetryFocus] = useState<"photos" | "voice" | "transactions" | null>(null);
+  const [retryFocus, setRetryFocus] = useState<"photos" | "voice" | "transactions" | "location" | "documents" | null>(null);
   const [precomputedVision, setPrecomputedVision] = useState<any>(null);
   const [precomputedVoice, setPrecomputedVoice] = useState<any>(null);
   const [precomputedVisionLoading, setPrecomputedVisionLoading] = useState(false);
