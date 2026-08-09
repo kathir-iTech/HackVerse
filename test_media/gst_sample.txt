@@ -1,3 +1,0 @@
-GSTIN: 27ABCDE1234F1Z5
-Business Name: HackVerse Store
-Issue Date: 2026-01-01
