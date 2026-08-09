@@ -9,7 +9,7 @@ import time
 import uuid
 from datetime import datetime
 from io import BytesIO
-from typing import List
+from typing import List, Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form, Header
@@ -55,6 +55,24 @@ app.add_middleware(
 
 class QueryRequest(BaseModel):
     query: str
+
+
+_DOC_TYPE_ALIASES = {
+    "gst_certificate": ["gst", "goods services tax", "gstin"],
+    "udyam_certificate": ["udyam", "msme", "udyog"],
+    "bank_statement": ["bank", "statement", "passbook", "account"],
+    "aadhaar_card": ["aadhaar", "aadhar", "uidai"],
+    "rent_agreement": ["rent", "agreement", "lease", "tenancy"],
+    "trade_license": ["trade", "license", "licence", "shops establishment"],
+}
+
+
+def _infer_document_type(filename: str) -> str | None:
+    lower = filename.lower().replace("_", "").replace("-", "").replace(" ", "")
+    for doc_type, aliases in _DOC_TYPE_ALIASES.items():
+        if any(alias in lower for alias in aliases):
+            return doc_type
+    return None
 
 
 @app.get("/health")
@@ -244,13 +262,9 @@ async def report_synthesize(
     voice_language: str = Form(None),
     pin_lat: float = Form(None),
     pin_lon: float = Form(None),
-    transactions: UploadFile = File(None),
-    gst_certificate: UploadFile = File(None),
-    udyam_certificate: UploadFile = File(None),
-    bank_statement: UploadFile = File(None),
-    aadhaar_card: UploadFile = File(None),
-    rent_agreement: UploadFile = File(None),
-    trade_license: UploadFile = File(None),
+    transactions: Optional[UploadFile] = File(None),
+    voice: Optional[UploadFile] = File(None),
+    documents: Optional[List[UploadFile]] = File(None),
     vendor_name: str = Form(None),
     shop_address: str = Form(None),
     has_savings_account: str = Form(None),
@@ -279,29 +293,23 @@ async def report_synthesize(
         "rent_agreement": None,
         "trade_license": None,
     }
-    doc_files = {
-        "gst_certificate": gst_certificate,
-        "udyam_certificate": udyam_certificate,
-        "bank_statement": bank_statement,
-        "aadhaar_card": aadhaar_card,
-        "rent_agreement": rent_agreement,
-        "trade_license": trade_license,
-    }
     document_result = None
     try:
-        any_doc = any(f is not None for f in doc_files.values())
-        if any_doc:
-            for doc_type, upload in doc_files.items():
-                if upload is not None:
-                    suffix = os.path.splitext(upload.filename)[1]
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                        shutil.copyfileobj(upload.file, tmp)
-                        doc_paths[doc_type] = tmp.name
+        doc_files = documents or []
+        if doc_files:
+            for upload in doc_files:
+                inferred_type = _infer_document_type(upload.filename or "")
+                if inferred_type is None:
+                    continue
+                suffix = os.path.splitext(upload.filename)[1]
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    shutil.copyfileobj(upload.file, tmp)
+                    doc_paths[inferred_type] = tmp.name
             document_result = process_documents(doc_paths)
     except Exception as e:
         document_result = {
             "documents_processed": [],
-            "documents_missing": list(doc_files.keys()),
+            "documents_missing": list(doc_paths.keys()),
             "extracted": {},
             "verification_signals": {},
             "error": f"Document processing failed: {str(e)}",
@@ -370,15 +378,10 @@ async def report_synthesize(
 
 @app.post("/report", dependencies=[Depends(verify_officer_pin)])
 async def report(
-    photos: List[UploadFile] = File(None),
-    audio: UploadFile = File(None),
-    transactions: UploadFile = File(None),
-    gst_certificate: UploadFile = File(None),
-    udyam_certificate: UploadFile = File(None),
-    bank_statement: UploadFile = File(None),
-    aadhaar_card: UploadFile = File(None),
-    rent_agreement: UploadFile = File(None),
-    trade_license: UploadFile = File(None),
+    photos: Optional[List[UploadFile]] = File(None),
+    voice: Optional[UploadFile] = File(None),
+    transactions: Optional[UploadFile] = File(None),
+    documents: Optional[List[UploadFile]] = File(None),
     manual_voice_text: str = Form(None),
     voice_language: str = Form(None),
     pin_lat: float = Form(None),
@@ -400,29 +403,23 @@ async def report(
         "rent_agreement": None,
         "trade_license": None,
     }
-    doc_files = {
-        "gst_certificate": gst_certificate,
-        "udyam_certificate": udyam_certificate,
-        "bank_statement": bank_statement,
-        "aadhaar_card": aadhaar_card,
-        "rent_agreement": rent_agreement,
-        "trade_license": trade_license,
-    }
     document_result = None
     try:
-        any_doc = any(f is not None for f in doc_files.values())
-        if any_doc:
-            for doc_type, upload in doc_files.items():
-                if upload is not None:
-                    suffix = os.path.splitext(upload.filename)[1]
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                        shutil.copyfileobj(upload.file, tmp)
-                        doc_paths[doc_type] = tmp.name
+        doc_files = documents or []
+        if doc_files:
+            for upload in doc_files:
+                inferred_type = _infer_document_type(upload.filename or "")
+                if inferred_type is None:
+                    continue
+                suffix = os.path.splitext(upload.filename)[1]
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    shutil.copyfileobj(upload.file, tmp)
+                    doc_paths[inferred_type] = tmp.name
             document_result = process_documents(doc_paths)
     except Exception as e:
         document_result = {
             "documents_processed": [],
-            "documents_missing": list(doc_files.keys()),
+            "documents_missing": list(doc_paths.keys()),
             "extracted": {},
             "verification_signals": {},
             "error": f"Document processing failed: {str(e)}",
@@ -437,9 +434,9 @@ async def report(
     if photos is not None:
         coros.append(_run_agent("vision", photos, False, analyze_photos))
         mapping.append("vision")
-    if audio is not None or not (manual_voice_text or "").strip():
+    if voice is not None or not (manual_voice_text or "").strip():
         voice_handler = functools.partial(process_voice, language=voice_language or None) if voice_language else process_voice
-        coros.append(_run_agent("voice", audio, True, voice_handler))
+        coros.append(_run_agent("voice", voice, True, voice_handler))
         mapping.append("voice")
     if transactions is not None:
         coros.append(_run_agent("transactions", transactions, True, analyze_transactions))

@@ -493,7 +493,7 @@ export default function Page() {
         }
         if (csv) fd.append("transactions", csv);
         for (const [docType, file] of Object.entries(documents)) {
-          if (file) fd.append(docType, file);
+          if (file) fd.append("documents", file, file.name);
         }
         if (vendorName) fd.append("vendor_name", vendorName);
         if (shopAddress) fd.append("shop_address", shopAddress);
@@ -504,7 +504,7 @@ export default function Page() {
       } else {
         const fd = new FormData();
         for (const f of photos) fd.append("photos", f);
-        if (audio) fd.append("audio", audio);
+        if (audio) fd.append("voice", audio);
         if (manualVoiceText.trim()) fd.append("manual_voice_text", manualVoiceText);
         if (voiceLanguage) fd.append("voice_language", voiceLanguage);
         if (pinnedLocation) {
@@ -513,7 +513,7 @@ export default function Page() {
         }
         if (csv) fd.append("transactions", csv);
         for (const [docType, file] of Object.entries(documents)) {
-          if (file) fd.append(docType, file);
+          if (file) fd.append("documents", file, file.name);
         }
         if (vendorName) fd.append("vendor_name", vendorName);
         if (shopAddress) fd.append("shop_address", shopAddress);
