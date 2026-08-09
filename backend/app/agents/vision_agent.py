@@ -41,25 +41,28 @@ SUMMARY_PROMPT_PREFIX = (
 
 
 def _describe_image_sync(image_path: str) -> str:
-    with open(image_path, "rb") as f:
-        image_bytes = f.read()
-    b64 = base64.b64encode(image_bytes).decode("utf-8")
-    data_uri = f"data:image/jpeg;base64,{b64}"
-    completion = client.chat.completions.create(
-        model=VISION_MODEL,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": DESCRIBE_PROMPT},
-                    {"type": "image_url", "image_url": {"url": data_uri}},
-                ],
-            }
-        ],
-        max_tokens=300,
-        timeout=30,
-    )
-    return completion.choices[0].message.content
+    try:
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+        b64 = base64.b64encode(image_bytes).decode("utf-8")
+        data_uri = f"data:image/jpeg;base64,{b64}"
+        completion = client.chat.completions.create(
+            model=VISION_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": DESCRIBE_PROMPT},
+                        {"type": "image_url", "image_url": {"url": data_uri}},
+                    ],
+                }
+            ],
+            max_tokens=300,
+            timeout=30,
+        )
+        return completion.choices[0].message.content or ""
+    except Exception:
+        return "Image could not be analyzed"
 
 
 BLANK_IMAGE_TERMS = (
@@ -102,13 +105,16 @@ async def _describe_image(image_path: str) -> str:
 
 
 def _summarize(combined: str) -> str:
-    completion = client.chat.completions.create(
-        model=TEXT_MODEL,
-        messages=[{"role": "user", "content": SUMMARY_PROMPT_PREFIX + combined}],
-        max_tokens=300,
-        timeout=30,
-    )
-    return completion.choices[0].message.content
+    try:
+        completion = client.chat.completions.create(
+            model=TEXT_MODEL,
+            messages=[{"role": "user", "content": SUMMARY_PROMPT_PREFIX + combined}],
+            max_tokens=300,
+            timeout=30,
+        )
+        return completion.choices[0].message.content or "No inventory summary available"
+    except Exception:
+        return "No inventory summary available"
 
 
 async def analyze_photos(image_paths: list[str]) -> dict:
