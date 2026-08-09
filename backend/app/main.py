@@ -33,7 +33,7 @@ from app.agents.voice_agent import process_voice, process_manual_text
 from app.agents.transaction_agent import analyze_transactions
 from app.agents.synthesis_agent import synthesize_report
 from app.agents.location_agent import verify_location, check_address_consistency
-from app.agents.anomaly_agent import compute_risk_indicators, compute_profile_completeness
+from app.agents.anomaly_agent import compute_risk_indicators, compute_profile_completeness, compute_cross_verification
 from app.agents.document_agent import process_documents
 
 app = FastAPI(title="HackVerse RAG API")
@@ -312,7 +312,7 @@ async def report_synthesize(
                 os.remove(p)
 
     t0 = time.time()
-    rag_context = retrieve("MSME working capital lending guidance", k=3)
+    rag_context = retrieve("MSME working capital lending guidance", k=2)
     timings["rag"] = round(time.time() - t0, 2)
 
     t0 = time.time()
@@ -324,7 +324,7 @@ async def report_synthesize(
     
     report_data["vision_result"] = vision_data
     report_data["voice_result"] = voice_data
-    report_data["document_analysis"] = document_result
+    report_data["document_analysis"] = _sanitize_document_analysis(document_result)
     if vendor_name:
         report_data["vendor_name"] = vendor_name
     if has_savings_account:
@@ -353,6 +353,17 @@ async def report_synthesize(
         report_data.get("location_verification"),
         report_data.get("photo_reuse_flag"),
     )
+
+    if document_result:
+        extra_flags = compute_cross_verification(
+            vision_data, voice_data, transaction_result, document_result
+        )
+        if extra_flags:
+            if "discrepancy_flags" not in report_data:
+                report_data["discrepancy_flags"] = []
+            report_data["discrepancy_flags"].extend(extra_flags)
+
+    report_data["document_analysis"] = _sanitize_document_analysis(document_result)
 
     return _finalize_report(report_data, transaction_result, rag_context, timings)
 
@@ -453,7 +464,7 @@ async def report(
         voice_result = await asyncio.to_thread(process_manual_text, manual_voice_text)
 
     t0 = time.time()
-    rag_context = retrieve("MSME working capital lending guidance", k=3)
+    rag_context = retrieve("MSME working capital lending guidance", k=2)
     timings["rag"] = round(time.time() - t0, 2)
 
     t0 = time.time()
@@ -465,7 +476,7 @@ async def report(
     
     report_data["vision_result"] = vision_result
     report_data["voice_result"] = voice_result
-    report_data["document_analysis"] = document_result
+    report_data["document_analysis"] = _sanitize_document_analysis(document_result)
     if vendor_name:
         report_data["vendor_name"] = vendor_name
     if has_savings_account:
@@ -495,7 +506,40 @@ async def report(
         report_data.get("photo_reuse_flag"),
     )
 
+    if document_result:
+        extra_flags = compute_cross_verification(
+            vision_result, voice_result, transaction_result, document_result
+        )
+        if extra_flags:
+            if "discrepancy_flags" not in report_data:
+                report_data["discrepancy_flags"] = []
+            report_data["discrepancy_flags"].extend(extra_flags)
+
+    report_data["document_analysis"] = _sanitize_document_analysis(document_result)
+
     return _finalize_report(report_data, transaction_result, rag_context, timings)
+
+
+def _sanitize_document_analysis(document_result: dict | None) -> dict | None:
+    if not document_result:
+        return None
+    sanitized = {
+        "documents_processed": document_result.get("documents_processed", []),
+        "documents_missing": document_result.get("documents_missing", []),
+        "verification_signals": document_result.get("verification_signals", {}),
+        "extracted": {},
+    }
+    for doc_type, info in document_result.get("extracted", {}).items():
+        if isinstance(info, dict):
+            sanitized["extracted"][doc_type] = {
+                "document_type": info.get("document_type"),
+                "key_fields": info.get("key_fields", {}),
+                "verified": info.get("verified", False),
+                "verification_reason": info.get("verification_reason", ""),
+            }
+        else:
+            sanitized["extracted"][doc_type] = info
+    return sanitized
 
 
 def _finalize_report(report_data, transaction_result, rag_context, timings):

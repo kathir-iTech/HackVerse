@@ -51,6 +51,92 @@ def compute_risk_indicators(
     }
 
 
+def _extract_vision_inventory_level(vision_result) -> str | None:
+    if not vision_result or "error" in vision_result:
+        return None
+    summary = vision_result.get("summary", "") or ""
+    if not summary:
+        return None
+    lower = summary.lower()
+    if any(k in lower for k in ("minimal", "low stock", "barely any", "empty shelf", "sparse")):
+        return "low"
+    if any(k in lower for k in ("well-stocked", "full", "abundant", "high inventory", "well stocked")):
+        return "high"
+    return "moderate"
+
+
+def compute_cross_verification(
+    vision_result,
+    voice_result,
+    transaction_result,
+    document_result,
+) -> list[str]:
+    flags = []
+    if not transaction_result or "error" in transaction_result:
+        return flags
+
+    total_inflow = transaction_result.get("total_inflow", 0) or 0
+    transaction_count = transaction_result.get("transaction_count", 0) or 0
+    txn_trend = transaction_result.get("trend", "") or ""
+
+    vision_inventory = _extract_vision_inventory_level(vision_result)
+    if vision_inventory == "low" and total_inflow > 500000:
+        flags.append(
+            "Transaction inflow is high (₹{:,.0f}) but photos show minimal inventory — "
+            "verify whether the reported sales volume matches visible stock levels.".format(total_inflow)
+        )
+    if vision_inventory == "high" and total_inflow < 50000:
+        flags.append(
+            "Photos show well-stocked inventory but transaction inflow is very low (₹{:,.0f}) — "
+            "verify whether the business is actively trading.".format(total_inflow)
+        )
+
+    if document_result and document_result.get("extracted"):
+        doc_extracted = document_result["extracted"]
+        gst_cert = doc_extracted.get("gst_certificate", {})
+        kf_gst = gst_cert.get("key_fields", {}) if isinstance(gst_cert, dict) else {}
+        gst_turnover_str = kf_gst.get("annual_turnover") or kf_gst.get("turnover") or ""
+        if gst_turnover_str:
+            try:
+                gst_turnover = float(str(gst_turnover_str).replace(",", "").replace("₹", "").strip())
+                if gst_turnover > 0 and total_inflow > 0:
+                    ratio = total_inflow / gst_turnover
+                    if ratio > 5:
+                        flags.append(
+                            "Transaction inflow (₹{:,.0f}) appears disproportionately high compared to "
+                            "GST-registered turnover (₹{:,.0f}) — verify turnover declaration.".format(
+                                total_inflow, gst_turnover
+                            )
+                        )
+                    elif ratio < 0.1:
+                        flags.append(
+                            "Transaction inflow (₹{:,.0f}) appears very low compared to "
+                            "GST-registered turnover (₹{:,.0f}) — verify if this is a partial statement.".format(
+                                total_inflow, gst_turnover
+                            )
+                        )
+            except (ValueError, TypeError):
+                pass
+
+    voice_extracted = voice_result.get("extracted", {}) if voice_result else {}
+    claimed_tenure = voice_extracted.get("years_operating") if isinstance(voice_extracted, dict) else None
+    if claimed_tenure and transaction_result.get("date_range_days"):
+        try:
+            claimed_days = float(claimed_tenure) * 365
+            actual_days = float(transaction_result["date_range_days"])
+            if claimed_days > actual_days * 1.5:
+                flags.append(
+                    "Voice note claims ~{:.0f} years of operation but transaction records only span {} days — "
+                    "ask for older ledger entries or passbook to verify tenure.".format(
+                        float(claimed_tenure), actual_days
+                    )
+                )
+        except (ValueError, TypeError):
+            pass
+
+    return flags
+
+
 def compute_profile_completeness(
     vision_result,
     voice_result,
@@ -63,77 +149,61 @@ def compute_profile_completeness(
     """
     Profile Completeness Index — measures how much evidence was gathered, NOT creditworthiness.
     Score 0-100 based on evidence availability. Higher score = more evidence collected.
+    Location is informational only and does not contribute to the score.
     """
     score = 0
     missing_for_next_tier = []
 
-    # Photos (+15)
     if vision_result is not None and "error" not in vision_result:
         score += 15
     else:
         missing_for_next_tier.append("Shop photos — add photos to reach Partial tier")
 
-    # Voice note (+15)
     if voice_result is not None and "error" not in voice_result:
         score += 15
     else:
         missing_for_next_tier.append("Voice note — add voice note to reach Partial tier")
 
-    # Transaction records (+20)
     if transaction_result is not None and "error" not in transaction_result:
         score += 20
     else:
         missing_for_next_tier.append("Transaction records — add transactions to reach Substantial tier")
 
-    # Vendor has savings account (+20)
     has_savings = vendor_formal_status.get("has_savings_account") if vendor_formal_status else None
     if has_savings == "yes" or has_savings == "Yes":
         score += 20
     else:
         missing_for_next_tier.append("Savings account verification — confirm vendor has savings account to reach Substantial tier")
 
-    # GST certificate (+10)
     doc_extracted = document_result.get("extracted", {}) if document_result else {}
-    if document_result and document_result.get("verification_signals", {}).get("has_gst"):
+    doc_verification = document_result.get("verification_signals", {}) if document_result else {}
+    if doc_verification.get("has_gst"):
         score += 10
     else:
         missing_for_next_tier.append("GST certificate — add GST certificate to reach Comprehensive tier")
 
-    # Udyam certificate (+10)
-    if document_result and document_result.get("verification_signals", {}).get("has_udyam"):
+    if doc_verification.get("has_udyam"):
         score += 10
     else:
         missing_for_next_tier.append("Udyam/MSME certificate — add Udyam certificate to reach Comprehensive tier")
 
-    # Bank statement (+10)
-    if document_result and document_result.get("verification_signals", {}).get("has_bank_account"):
+    if doc_verification.get("has_bank_account"):
         score += 10
     else:
         missing_for_next_tier.append("Bank statement — add bank statement to reach Comprehensive tier")
 
-    # Trade license or rent agreement (+5, capped)
-    doc_verification = document_result.get("verification_signals", {}) if document_result else {}
     has_trade_or_rent = doc_verification.get("has_trade_license", False)
     if has_trade_or_rent:
         score += 5
 
-    # Location verified (+5)
-    if location_verification and location_verification.get("location_found"):
-        score += 5
-    else:
-        missing_for_next_tier.append("Location verification — pin location to reach Comprehensive tier")
-
-    # Discrepancy bonus/penalty (±5)
     flags = discrepancy_flags or []
     if not flags:
         score += 5
     else:
         score -= 5
 
-    # Cap score at 0-100
     score = max(0, min(100, score))
 
-    # Determine tier
     if score <= 30:
         tier = "Minimal"
     elif score <= 60:
@@ -143,13 +213,12 @@ def compute_profile_completeness(
     else:
         tier = "Comprehensive"
 
-    # Compute missing_for_next_tier for current tier
     if tier == "Minimal":
         pass
     elif tier == "Partial":
-        missing_for_next_tier = [m for m in missing_for_next_tier if "transactions" in m or "Savings account" in m or "location" in m.lower()]
+        missing_for_next_tier = [m for m in missing_for_next_tier if "transactions" in m or "Savings account" in m]
     elif tier == "Substantial":
-        missing_for_next_tier = [m for m in missing_for_next_tier if "GST" in m or "Udyam" in m or "Bank" in m or "location" in m.lower()]
+        missing_for_next_tier = [m for m in missing_for_next_tier if "GST" in m or "Udyam" in m or "Bank" in m]
 
     return {
         "completeness_score": score,
