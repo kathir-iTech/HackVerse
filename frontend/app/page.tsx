@@ -859,22 +859,6 @@ export default function Page() {
             </div>
           )}
 
-          {/* Band scores standalone card (always shown, no reasoning) */}
-          <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6 divide-y divide-slate-100">
-            {[
-              { label: "Revenue Consistency", value: report.revenue_consistency_band },
-              { label: "Inventory Observation", value: report.inventory_observation_band },
-              { label: "Digital Activity", value: report.digital_activity_band },
-            ].map((row) => (
-              <div key={row.label} className="py-2.5 flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">{row.label}</span>
-                <span className={`px-2.5 py-0.5 text-[11px] font-semibold border rounded-full ${bandColor(row.value)}`}>
-                  {row.value}
-                </span>
-              </div>
-            ))}
-          </div>
-
           {/* Card 10 — Formal Status */}
           {report.vendor_formal_status && (
             <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
