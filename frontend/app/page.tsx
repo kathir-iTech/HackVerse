@@ -1458,7 +1458,16 @@ const trendArrow = trend === "Improved" ? "↑" : trend === "Declined" ? "↓" :
                     value={formData.get("annual_turnover")?.toString() || ""}
                     onChange={(e) => {
                       const val = e.target.value ? parseFloat(e.target.value) : null;
-                      setFormData(prev => { const next = new FormData(prev); next.append("annual_turnover", val ?? ""); return next; });
+                      setFormData(prev => {
+                        const next = new FormData();
+                        prev.forEach((value, key) => next.append(key, value));
+                        if (val !== null) {
+                          next.set("annual_turnover", val.toString());
+                        } else {
+                          next.delete("annual_turnover");
+                        }
+                        return next;
+                      });
                     }}
                     placeholder="e.g., 1500000"
                     className="mt-1 block w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-400"
