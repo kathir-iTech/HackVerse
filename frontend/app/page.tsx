@@ -610,7 +610,7 @@ export default function Page() {
             <p className="mt-2 text-sm text-slate-700 leading-relaxed">{report.relevant_scheme_note}</p>
             {(Array.isArray(report.sources_cited) ? report.sources_cited : []).length > 0 && (
               <p className="mt-3 text-[11px] text-slate-400">
-                Sources referenced: {report.sources_cited.join(", ")}
+                Sources referenced: {(report.sources_cited ?? []).join(", ")}
               </p>
             )}
           </div>
