@@ -60,7 +60,6 @@ def process_voice(audio_path: str) -> dict:
     except json.JSONDecodeError:
         extracted = {"raw_response": raw}
     return {
-        "transcript": transcript,
         "transcript_pii_scrubbed": transcript_safe,
         "extracted": extracted,
         "label": "officer observation, unverified",
