@@ -50,11 +50,8 @@ _DEV_MODE = os.environ.get("DEV_MODE", "").lower() in ("1", "true", "yes")
 
 
 def verify_officer_pin(x_officer_pin: str = ""):
-    if _DEV_MODE:
-        return
     if not _OFFICER_PIN:
-        from fastapi.responses import JSONResponse
-        raise HTTPException(status_code=503, detail="Server misconfigured: OFFICER_PIN not set")
+        return  # dev/demo mode: no PIN configured, allow all
     if x_officer_pin != _OFFICER_PIN:
         raise HTTPException(status_code=401, detail="Invalid officer PIN")
 
@@ -159,8 +156,7 @@ def rag_query(req: QueryRequest):
 
 
 @app.post("/agents/vision")
-async def agents_vision(files: List[UploadFile] = File(...), x_officer_pin: str = ""):
-    verify_officer_pin(x_officer_pin)
+async def agents_vision(files: List[UploadFile] = File(...)):
     temp_paths = []
     input_errors = []
     try:
@@ -187,8 +183,7 @@ async def agents_vision(files: List[UploadFile] = File(...), x_officer_pin: str 
 
 
 @app.post("/agents/voice")
-async def agents_voice(file: UploadFile = File(...), language: str = Form(None), x_officer_pin: str = ""):
-    verify_officer_pin(x_officer_pin)
+async def agents_voice(file: UploadFile = File(...), language: str = Form(None)):
     suffix = os.path.splitext(file.filename)[1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         shutil.copyfileobj(file.file, tmp)
