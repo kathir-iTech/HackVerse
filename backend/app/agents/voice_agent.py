@@ -1,3 +1,4 @@
+import concurrent.futures
 import sys
 import shutil
 
@@ -29,6 +30,16 @@ def _get_whisper():
     if _whisper_model is None:
         _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
     return _whisper_model
+
+
+def _transcribe_with_timeout(model, audio_path: str, language, timeout: int = 120):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(model.transcribe, audio_path, language=language)
+        try:
+            result = future.result(timeout=timeout)
+            return result
+        except concurrent.futures.TimeoutError:
+            return None
 
 
 def _extract_from_text(transcript_safe: str) -> dict:
@@ -80,9 +91,12 @@ def process_voice(audio_path: str, language: str | None = None) -> dict:
     model = _get_whisper()
     t0 = time.time()
     try:
-        segments, info = model.transcribe(audio_path, language=language)
+        result = _transcribe_with_timeout(model, audio_path, language, timeout=120)
     except Exception as e:
         return {"error": "voice processing failed", "detail": str(e)}
+    if result is None:
+        return {"error": "voice processing timeout", "transcript": "", "transcript_pii_scrubbed": ""}
+    segments, info = result
     t1 = time.time()
     print(f"[voice_agent] whisper transcribe took {t1 - t0:.2f}s", flush=True)
     transcript = " ".join(seg.text.strip() for seg in segments)

@@ -48,6 +48,10 @@ def analyze_transactions(csv_path: str) -> dict:
     if not os.path.isfile(csv_path):
         return {"error": "transaction data unavailable"}
 
+    file_size = os.path.getsize(csv_path)
+    if file_size > 5 * 1024 * 1024:  # 5MB limit
+        return {"error": "transaction file too large", "detail": "Maximum file size is 5MB"}
+
     try:
         lower = csv_path.lower()
         if lower.endswith(".xlsx") or lower.endswith(".xls"):
@@ -169,15 +173,13 @@ def analyze_transactions(csv_path: str) -> dict:
         else:
             daily["net"] = daily["amount"]
         daily_net = daily.groupby(daily["date"].dt.date)["net"].sum()
-        cv = float(daily_net.std() / daily_net.mean()) if daily_net.mean() != 0 else 0.0
+        mean_val = float(daily_net.mean())
+        if abs(mean_val) < 1.0:  # near-zero mean — CV undefined
+            volatility = "high"
+        else:
+            cv = float(daily_net.std()) / abs(mean_val)
+            volatility = "low" if cv < 0.3 else "moderate" if cv < 0.7 else "high"
     except Exception:
-        cv = 0.0
-
-    if cv < 0.5:
-        volatility = "low"
-    elif cv < 1.0:
-        volatility = "moderate"
-    else:
         volatility = "high"
 
     # month-over-month trend via linear slope

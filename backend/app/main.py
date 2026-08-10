@@ -3,6 +3,7 @@ import functools
 import glob
 import json
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -12,7 +13,7 @@ from io import BytesIO
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -38,10 +39,24 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:3001",
         "https://hack-verse-psi.vercel.app",
+        "https://theligai-hackverse.vercel.app",
     ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_OFFICER_PIN = os.environ.get("OFFICER_PIN", "")
+_DEV_MODE = os.environ.get("DEV_MODE", "").lower() in ("1", "true", "yes")
+
+
+def verify_officer_pin(x_officer_pin: str = ""):
+    if _DEV_MODE:
+        return
+    if not _OFFICER_PIN:
+        from fastapi.responses import JSONResponse
+        raise HTTPException(status_code=503, detail="Server misconfigured: OFFICER_PIN not set")
+    if x_officer_pin != _OFFICER_PIN:
+        raise HTTPException(status_code=401, detail="Invalid officer PIN")
 
 
 class QueryRequest(BaseModel):
@@ -72,7 +87,8 @@ def health():
 
 
 @app.get("/reports")
-def list_reports():
+def list_reports(x_officer_pin: str = ""):
+    verify_officer_pin(x_officer_pin)
     files = sorted(
         glob.glob(os.path.join(REPORT_CACHE_DIR, "*.json")),
         key=os.path.getmtime,
@@ -96,8 +112,10 @@ def list_reports():
 
 
 @app.get("/vendors/{vendor_name}/history")
-def vendor_history(vendor_name: str):
-    vendor = vendor_name.lower()
+def vendor_history(vendor_name: str, x_officer_pin: str = ""):
+    verify_officer_pin(x_officer_pin)
+    vendor_name_safe = re.sub(r'[^a-zA-Z0-9_\- ]', '', vendor_name)[:100]
+    vendor = vendor_name_safe.lower()
     entries = []
     for path in glob.glob(os.path.join(REPORT_CACHE_DIR, "*.json")):
         try:
@@ -105,7 +123,8 @@ def vendor_history(vendor_name: str):
                 data = json.load(f)
         except Exception:
             continue
-        if data.get("vendor_name", "").lower() != vendor:
+        stored = re.sub(r'[^a-zA-Z0-9_\- ]', '', data.get("vendor_name", ""))[:100].lower()
+        if stored != vendor:
             continue
         mtime = os.path.getmtime(path)
         entries.append({
@@ -121,7 +140,10 @@ def vendor_history(vendor_name: str):
 
 
 @app.get("/reports/{report_id}")
-def get_report(report_id: str):
+def get_report(report_id: str, x_officer_pin: str = ""):
+    verify_officer_pin(x_officer_pin)
+    if not re.match(r'^[a-f0-9\-]{36}$', report_id):
+        raise HTTPException(status_code=400, detail="Invalid report ID format")
     cache_path = os.path.join(REPORT_CACHE_DIR, f"{report_id}.json")
     if not os.path.isfile(cache_path):
         from fastapi.responses import JSONResponse
@@ -137,30 +159,48 @@ def rag_query(req: QueryRequest):
 
 
 @app.post("/agents/vision")
-async def agents_vision(files: List[UploadFile] = File(...)):
+async def agents_vision(files: List[UploadFile] = File(...), x_officer_pin: str = ""):
+    verify_officer_pin(x_officer_pin)
     temp_paths = []
+    input_errors = []
     try:
         for f in files:
             suffix = os.path.splitext(f.filename)[1]
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 shutil.copyfileobj(f.file, tmp)
-                temp_paths.append(tmp.name)
-        return await analyze_photos(temp_paths)
+                temp_path = tmp.name
+            if os.path.getsize(temp_path) > 10 * 1024 * 1024:
+                os.remove(temp_path)
+                input_errors.append(f"{f.filename}: file too large (max 10MB)")
+                continue
+            temp_paths.append(temp_path)
+        if input_errors and not temp_paths:
+            return {"error": "all files too large", "details": input_errors}
+        result = await analyze_photos(temp_paths)
+        if input_errors:
+            result["file_errors"] = input_errors
+        return result
     finally:
         for p in temp_paths:
-            os.remove(p)
+            if os.path.isfile(p):
+                os.remove(p)
 
 
 @app.post("/agents/voice")
-async def agents_voice(file: UploadFile = File(...), language: str = Form(None)):
+async def agents_voice(file: UploadFile = File(...), language: str = Form(None), x_officer_pin: str = ""):
+    verify_officer_pin(x_officer_pin)
     suffix = os.path.splitext(file.filename)[1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         shutil.copyfileobj(file.file, tmp)
         temp_path = tmp.name
+    if os.path.getsize(temp_path) > 10 * 1024 * 1024:
+        os.remove(temp_path)
+        return {"error": "voice file too large", "detail": "Maximum file size is 10MB"}
     try:
         return process_voice(temp_path, language=language or None)
     finally:
-        os.remove(temp_path)
+        if os.path.isfile(temp_path):
+            os.remove(temp_path)
 
 
 async def _run_agent(
@@ -295,7 +335,11 @@ async def report_synthesize(
                 suffix = os.path.splitext(upload.filename)[1]
                 with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                     shutil.copyfileobj(upload.file, tmp)
-                    doc_paths[inferred_type] = tmp.name
+                    temp_path = tmp.name
+                if os.path.getsize(temp_path) > 10 * 1024 * 1024:
+                    os.remove(temp_path)
+                    continue
+                doc_paths[inferred_type] = temp_path
             document_result = process_documents(doc_paths)
     except Exception as e:
         document_result = {
@@ -405,7 +449,11 @@ async def report(
                 suffix = os.path.splitext(upload.filename)[1]
                 with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                     shutil.copyfileobj(upload.file, tmp)
-                    doc_paths[inferred_type] = tmp.name
+                    temp_path = tmp.name
+                if os.path.getsize(temp_path) > 10 * 1024 * 1024:
+                    os.remove(temp_path)
+                    continue
+                doc_paths[inferred_type] = temp_path
             document_result = process_documents(doc_paths)
     except Exception as e:
         document_result = {
@@ -639,6 +687,37 @@ def _finalize_report(report_data, transaction_result, rag_context, timings):
     try:
         with open(cache_path, "w") as f:
             json.dump(report_data, f)
+    except Exception:
+        pass
+
+    # Cap cache: keep only the 100 most recent report files
+    try:
+        cache_files = sorted(
+            glob.glob(os.path.join(REPORT_CACHE_DIR, "*.json")),
+            key=os.path.getmtime,
+        )
+        if len(cache_files) > 100:
+            for old_file in cache_files[:-100]:
+                try:
+                    os.remove(old_file)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Cap photo hashes: keep only the 50 most recent vendor hash files
+    try:
+        os.makedirs(PHOTO_HASH_DIR, exist_ok=True)
+        hash_files = sorted(
+            glob.glob(os.path.join(PHOTO_HASH_DIR, "*.json")),
+            key=os.path.getmtime,
+        )
+        if len(hash_files) > 50:
+            for old_file in hash_files[:-50]:
+                try:
+                    os.remove(old_file)
+                except Exception:
+                    pass
     except Exception:
         pass
 

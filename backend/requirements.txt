@@ -1,14 +1,11 @@
 fastapi
 uvicorn
-langchain
 langchain-community
-langchain-openai
+langchain-text-splitters
 chromadb
 pypdf
-PyPDF2
 python-multipart
 python-dotenv
-requests
 faster-whisper
 openai
 pandas

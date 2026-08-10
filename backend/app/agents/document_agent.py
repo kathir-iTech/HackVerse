@@ -419,6 +419,11 @@ def process_documents(doc_paths: dict) -> dict:
             documents_processed.append(doc_type)
             try:
                 result = _process_single_document(doc_type, path)
+                # Scrub PII from all extracted string fields
+                if isinstance(result.get("key_fields"), dict):
+                    for k, v in result["key_fields"].items():
+                        if isinstance(v, str):
+                            result["key_fields"][k] = scrub_pii(v)
                 extracted[doc_type] = result
                 is_verified = result.get("verified", False)
                 if doc_type == "gst_certificate":

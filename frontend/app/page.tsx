@@ -267,7 +267,14 @@ export default function Page() {
     !!navigator.mediaDevices?.getUserMedia;
 
   const handlePhotos = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
+    const rawFiles = Array.from(e.target.files ?? []);
+    const oversized = rawFiles.filter(f => f.size > 10 * 1024 * 1024);
+    if (oversized.length > 0) {
+      setError(`Photo too large (max 10MB): ${oversized.map(f => f.name).join(", ")}`);
+      return;
+    }
+    setError(null);
+    const files = rawFiles;
     setPhotos(files);
     if (files.length === 0) {
       setPrecomputedVision(null);
@@ -293,6 +300,11 @@ export default function Page() {
   }, []);
 
   const handleAudio = useCallback(async (file: File | null) => {
+    if (file && file.size > 25 * 1024 * 1024) {
+      setError("Audio file too large (max 25MB)");
+      return;
+    }
+    setError(null);
     setAudio(file);
     if (!file) {
       setPrecomputedVoice(null);
@@ -593,7 +605,7 @@ export default function Page() {
 
     return (
       <main className="max-w-2xl mx-auto px-4 py-10">
-        {/* Phase 2 — P2-ST6: print CSS */}
+        {/* Print CSS */}
         <style dangerouslySetInnerHTML={{ __html: `
           @media print {
             .no-print { display: none !important; }
@@ -616,63 +628,222 @@ export default function Page() {
           <p className="text-xs text-slate-500">Generated: {new Date().toLocaleDateString()}</p>
         </div>
 
-        {/* Nav row */}
+        {/* 1. Header: Theligai title + Report ID + New Report button */}
         <div className="flex items-center justify-between mb-4 no-print">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Theligai</h1>
-            <p className="text-xs text-slate-400">Business Readiness Report for MSME Field Assessment</p>
+            {report.report_id && <p className="text-[11px] text-slate-400 font-mono">ID: {report.report_id}</p>}
           </div>
-          <button onClick={reset} className="no-print text-sm text-slate-500 hover:text-slate-700 underline">
-            New Report
-          </button>
+          <div className="flex items-center gap-2 no-print">
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="no-print flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
+            >
+              📄 Download PDF
+            </button>
+            <button onClick={reset} className="no-print text-sm text-slate-500 hover:text-slate-700 underline">
+              New Report
+            </button>
+          </div>
         </div>
 
         <div className="space-y-4">
 
-          {/* Card 1 — Assessment Header (Phase 2 P2-ST1 + Phase 3 P3-ST2) */}
+          {/* 2. ASSESSMENT BAND — large, prominent, colored box */}
           <div className={`report-card rounded-xl border p-4 md:p-6 ${verdictStyle(report.assessment_band)}`}>
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-wide opacity-80">Overall Assessment</p>
-                <p className="mt-2 text-3xl font-bold leading-tight">{report.assessment_band}</p>
-                <p className="mt-2 text-sm opacity-80">Assessed by Theligai — Officer review required before any credit decision</p>
-                {report.profile_completeness && (
-                  <span className="mt-3 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-white/20 border border-white/30">
-                    {report.profile_completeness.completeness_tier}
-                  </span>
-                )}
+            <p className="text-xs font-semibold uppercase tracking-wide opacity-80">Overall Assessment</p>
+            <p className="mt-2 text-3xl font-bold leading-tight">{report.assessment_band}</p>
+            <p className="mt-2 text-sm opacity-80">Assessed by Theligai — Officer review required before any credit decision</p>
+          </div>
+
+          {/* 3. PROFILE COMPLETENESS INDEX */}
+          {report.profile_completeness && (
+            <div className="report-card bg-indigo-50 rounded-xl border border-indigo-200 p-4 md:p-6">
+              <span className="text-xs font-semibold text-indigo-600 uppercase tracking-wide">Profile Completeness Index</span>
+              <p className="text-[10px] text-indigo-400 mt-0.5">{report.profile_completeness.label ?? "Reflects evidence gathered, not creditworthiness"}</p>
+              <div className="mt-3 flex items-center gap-4">
+                <span className="text-2xl font-bold text-indigo-900">{report.profile_completeness.completeness_tier}</span>
+                <span className="text-sm text-indigo-600">{report.profile_completeness.completeness_score}%</span>
               </div>
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="no-print shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/40 text-sm font-medium bg-white/10 hover:bg-white/20 transition"
-              >
-                📄 Download PDF
-              </button>
+              <div className="mt-2 h-2.5 rounded-full bg-indigo-100 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-indigo-500 to-indigo-400 rounded-full transition-all duration-500"
+                  style={{ width: `${report.profile_completeness.completeness_score}%` }}
+                />
+              </div>
+              {Array.isArray(report.profile_completeness.missing_for_next_tier) && report.profile_completeness.missing_for_next_tier.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {report.profile_completeness.missing_for_next_tier.map((item, i) => (
+                    <li key={i} className="text-xs text-indigo-700 flex gap-1.5">
+                      <span className="text-indigo-400 mt-0.5 shrink-0">•</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
-          </div>
+          )}
 
-          {/* Card 2 — Key Evidence Summary (Phase 2 P2-ST2) */}
-          <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
-            <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Key Evidence Summary</span>
-            <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {[
-                { label: "Inventory", value: report.inventory_observation_band },
-                { label: "Business Activity", value: report.digital_activity_band },
-                { label: "Revenue Pattern", value: report.revenue_consistency_band },
-                { label: "Savings Account", value: savingsVal === "yes" ? "Yes" : savingsVal === "no" ? "No" : savingsVal === "unknown" ? "Unknown" : "—" },
-                { label: "Document Confidence", value: docConfidence },
-                { label: "Transaction Trend", value: activityValue },
-              ].map(({ label, value }) => (
-                <div key={label} className={`rounded-xl border p-3 flex flex-col gap-1 ${chipColor(value)}`}>
-                  <span className="text-[11px] font-medium opacity-70 uppercase tracking-wide">{label}</span>
-                  <span className="text-sm font-bold leading-tight">{value ?? "—"}</span>
+          {/* 4. RISK INDICATORS */}
+          {report.risk_indicators && (
+            <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
+              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Risk Indicators</span>
+              <p className={`mt-2 text-sm font-medium ${report.risk_indicators.indicators_triggered === 0 ? "text-emerald-700" : "text-amber-800"}`}>
+                {report.risk_indicators.risk_summary}
+              </p>
+              {report.risk_indicators.indicators && typeof report.risk_indicators.indicators === "object" && report.risk_indicators.indicators_triggered > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {report.risk_indicators.indicators.high_transaction_volatility && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">High transaction volatility</span>
+                  )}
+                  {report.risk_indicators.indicators.unverifiable_location && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">Unverifiable location</span>
+                  )}
+                  {report.risk_indicators.indicators.cross_source_conflicts && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">Cross-source conflicts detected</span>
+                  )}
+                  {report.risk_indicators.indicators.possible_photo_reuse && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">Possible photo reuse</span>
+                  )}
+                  {report.risk_indicators.indicators.incomplete_evidence && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">Incomplete evidence</span>
+                  )}
                 </div>
-              ))}
+              )}
             </div>
-          </div>
+          )}
 
-          {/* Card 3 — Discrepancy Flags (moved up) */}
+          {/* 5. OFFICER GUIDANCE */}
+          {report.officer_guidance && (
+            <div className="report-card bg-blue-50 rounded-xl border border-blue-200 p-4 md:p-6">
+              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Officer Guidance</span>
+              <p className="mt-2 text-sm text-blue-900 leading-relaxed">{report.officer_guidance}</p>
+            </div>
+          )}
+
+          {/* 6. ONBOARDING PATHWAY */}
+          {Array.isArray(report.onboarding_pathway) && report.onboarding_pathway.length > 0 && (
+            <div className="report-card bg-blue-50 rounded-xl border border-blue-200 p-4 md:p-6">
+              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Onboarding Pathway</span>
+              <p className="mt-1 text-base font-semibold text-blue-900">Recommended Next Steps for This Vendor</p>
+              <p className="text-xs text-blue-500 mt-0.5">These steps help this vendor become eligible for formal credit disbursement.</p>
+              <ul className="mt-3 space-y-1.5">
+                {report.onboarding_pathway.map((step, i) => (
+                  <li key={i} className="text-sm text-blue-900 flex gap-2">
+                    <span className="text-blue-400 mt-0.5 shrink-0">→</span>
+                    <span>{step}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* 7. BUSINESS TYPE */}
+          {report.business_type && (
+            <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
+              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Business Type</span>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{report.business_type}</p>
+            </div>
+          )}
+
+          {/* 8. EVIDENCE BANDS — Revenue/Inventory/Digital with Why? */}
+          {report.reasoning_trace && (
+            report.reasoning_trace.revenue_consistency_reasoning ||
+            report.reasoning_trace.inventory_observation_reasoning ||
+            report.reasoning_trace.digital_activity_reasoning
+          ) && (
+            <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
+              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Evidence Bands</span>
+              <div className="mt-3 divide-y divide-slate-100">
+                {[
+                  { label: "Revenue Consistency", value: report.revenue_consistency_band, reason: "revenue_consistency_reasoning" as ReasonKey },
+                  { label: "Inventory Observation", value: report.inventory_observation_band, reason: "inventory_observation_reasoning" as ReasonKey },
+                  { label: "Digital Activity", value: report.digital_activity_band, reason: "digital_activity_reasoning" as ReasonKey },
+                ].map((row) => {
+                  const reasonText = report.reasoning_trace?.[row.reason];
+                  if (!reasonText) return null;
+                  return (
+                    <div key={row.label} className="py-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">{row.label}</span>
+                          <span className={`px-2.5 py-0.5 text-[11px] font-semibold border rounded-full ${bandColor(row.value)}`}>
+                            {row.value}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedReason(expandedReason === row.reason ? null : row.reason)}
+                          className="no-print text-[11px] font-medium text-indigo-600 hover:text-indigo-800 underline underline-offset-2"
+                        >
+                          {expandedReason === row.reason ? "▲ Hide" : "▼ Why?"}
+                        </button>
+                      </div>
+                      {expandedReason === row.reason && (
+                        <p className="mt-1.5 text-xs text-slate-500 leading-relaxed">{reasonText}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 9. CROSS-VERIFICATION MATRIX */}
+          {report.source_agreement && (
+            <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 px-4 pt-4 pb-3 md:px-6 md:pt-6">
+              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Cross-Verification Matrix</span>
+              <div className="mt-3 flex flex-col items-center select-none">
+                <div className="flex items-center gap-0 w-full max-w-xs">
+                  <div className="flex-1 text-center">
+                    <div className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700">
+                      <span className="text-base">📷</span> Photo
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 px-1">
+                    <div className={`w-10 h-0.5 ${report.source_agreement.photo_voice === "agree" ? "bg-green-400" : report.source_agreement.photo_voice === "conflict" ? "bg-amber-400" : "bg-slate-200"}`} />
+                    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${AGREEMENT_COLORS[report.source_agreement.photo_voice || "insufficient_data"] || AGREEMENT_COLORS.insufficient_data}`}>
+                      {report.source_agreement.photo_voice === "agree" ? "✓" : report.source_agreement.photo_voice === "conflict" ? "⚠" : "—"}
+                    </span>
+                    <div className={`w-10 h-0.5 ${report.source_agreement.photo_voice === "agree" ? "bg-green-400" : report.source_agreement.photo_voice === "conflict" ? "bg-amber-400" : "bg-slate-200"}`} />
+                  </div>
+                  <div className="flex-1 text-center">
+                    <div className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700">
+                      <span className="text-base">🎙️</span> Voice
+                    </div>
+                  </div>
+                </div>
+                <div className="flex justify-between w-full max-w-xs h-6">
+                  <div className="flex flex-col items-center w-1/3">
+                    <div className={`w-0.5 h-3 ${report.source_agreement.photo_transactions === "agree" ? "bg-green-400" : report.source_agreement.photo_transactions === "conflict" ? "bg-amber-400" : "bg-slate-200"}`} />
+                  </div>
+                  <div className="flex flex-col items-center w-1/3">
+                    <div className={`w-0.5 h-3 ${report.source_agreement.voice_transactions === "agree" ? "bg-green-400" : report.source_agreement.voice_transactions === "conflict" ? "bg-amber-400" : "bg-slate-200"}`} />
+                  </div>
+                </div>
+                <div className="flex justify-between w-full max-w-xs -mt-0.5">
+                  <div className="flex justify-center w-1/3">
+                    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${AGREEMENT_COLORS[report.source_agreement.photo_transactions || "insufficient_data"] || AGREEMENT_COLORS.insufficient_data}`}>
+                      {report.source_agreement.photo_transactions === "agree" ? "✓" : report.source_agreement.photo_transactions === "conflict" ? "⚠" : "—"}
+                    </span>
+                  </div>
+                  <div className="flex justify-center w-1/3">
+                    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${AGREEMENT_COLORS[report.source_agreement.voice_transactions || "insufficient_data"] || AGREEMENT_COLORS.insufficient_data}`}>
+                      {report.source_agreement.voice_transactions === "agree" ? "✓" : report.source_agreement.voice_transactions === "conflict" ? "⚠" : "—"}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-1 flex justify-center w-full max-w-xs">
+                  <div className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700">
+                    <span className="text-base">💰</span> Transactions
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 10. NEEDS OFFICER REVIEW — discrepancy flags */}
           {(report.photo_reuse_flag || (report.discrepancy_flags && report.discrepancy_flags.length > 0)) && (
             <div className="report-card bg-amber-50 rounded-xl border border-amber-200 p-4 md:p-6">
               <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Needs Officer Review</span>
@@ -693,24 +864,7 @@ export default function Page() {
             </div>
           )}
 
-          {/* Card 4 — Onboarding Pathway */}
-          {Array.isArray(report.onboarding_pathway) && report.onboarding_pathway.length > 0 && (
-            <div className="report-card bg-blue-50 rounded-xl border border-blue-200 p-4 md:p-6">
-              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Onboarding Pathway</span>
-              <p className="mt-1 text-base font-semibold text-blue-900">Recommended Next Steps for This Vendor</p>
-              <p className="text-xs text-blue-500 mt-0.5">These steps help this vendor become eligible for formal credit disbursement.</p>
-              <ul className="mt-3 space-y-1.5">
-                {report.onboarding_pathway.map((step, i) => (
-                  <li key={i} className="text-sm text-blue-900 flex gap-2">
-                    <span className="text-blue-400 mt-0.5 shrink-0">→</span>
-                    <span>{step}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Card 5 — Financial Evidence */}
+          {/* 11. FINANCIAL EVIDENCE */}
           {hasFinancial && (
             <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
               <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Financial Evidence</span>
@@ -751,7 +905,7 @@ export default function Page() {
             </div>
           )}
 
-          {/* Card 6 — Document Analysis */}
+          {/* 12. DOCUMENT ANALYSIS */}
           {report.document_analysis && report.document_analysis.documents_processed?.length > 0 && (
             <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
               <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Document Analysis</span>
@@ -778,91 +932,10 @@ export default function Page() {
             </div>
           )}
 
-          {/* Card 7 — Risk Indicators */}
-          {report.risk_indicators && (
-            <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
-              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Risk Indicators</span>
-              <p className={`mt-2 text-sm font-medium ${report.risk_indicators.indicators_triggered === 0 ? "text-emerald-700" : "text-amber-800"}`}>
-                {report.risk_indicators.risk_summary}
-              </p>
-              {report.risk_indicators.indicators && typeof report.risk_indicators.indicators === "object" && report.risk_indicators.indicators_triggered > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {report.risk_indicators.indicators.high_transaction_volatility && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">High transaction volatility</span>
-                  )}
-                  {report.risk_indicators.indicators.unverifiable_location && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">Unverifiable location</span>
-                  )}
-                  {report.risk_indicators.indicators.cross_source_conflicts && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">Cross-source conflicts detected</span>
-                  )}
-                  {report.risk_indicators.indicators.possible_photo_reuse && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">Possible photo reuse</span>
-                  )}
-                  {report.risk_indicators.indicators.incomplete_evidence && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">Incomplete evidence</span>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Card 8 — Officer Guidance */}
-          {report.officer_guidance && (
-            <div className="report-card bg-blue-50 rounded-xl border border-blue-200 p-4 md:p-6">
-              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Officer Guidance</span>
-              <p className="mt-2 text-sm text-blue-900 leading-relaxed">{report.officer_guidance}</p>
-            </div>
-          )}
-
-          {/* Card 9 — Reasoning Trace (Phase 2 P2-ST4: extracted from band rows) */}
-          {report.reasoning_trace && (
-            report.reasoning_trace.revenue_consistency_reasoning ||
-            report.reasoning_trace.inventory_observation_reasoning ||
-            report.reasoning_trace.digital_activity_reasoning
-          ) && (
-            <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
-              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Reasoning Trace</span>
-              <div className="mt-3 divide-y divide-slate-100">
-                {/* Band scores row (no reasoning inline) */}
-                {[
-                  { label: "Revenue Consistency", value: report.revenue_consistency_band, reason: "revenue_consistency_reasoning" as ReasonKey },
-                  { label: "Inventory Observation", value: report.inventory_observation_band, reason: "inventory_observation_reasoning" as ReasonKey },
-                  { label: "Digital Activity", value: report.digital_activity_band, reason: "digital_activity_reasoning" as ReasonKey },
-                ].map((row) => {
-                  const reasonText = report.reasoning_trace?.[row.reason];
-                  if (!reasonText) return null;
-                  return (
-                    <div key={row.label} className="py-2.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">{row.label}</span>
-                          <span className={`px-2.5 py-0.5 text-[11px] font-semibold border rounded-full ${bandColor(row.value)}`}>
-                            {row.value}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setExpandedReason(expandedReason === row.reason ? null : row.reason)}
-                          className="no-print text-[11px] font-medium text-indigo-600 hover:text-indigo-800 underline underline-offset-2"
-                        >
-                          {expandedReason === row.reason ? "▲ Hide" : "▼ Why?"}
-                        </button>
-                      </div>
-                      {expandedReason === row.reason && (
-                        <p className="mt-1.5 text-xs text-slate-500 leading-relaxed">{reasonText}</p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Card 10 — Formal Status */}
+          {/* 13. VENDOR FORMAL STATUS */}
           {report.vendor_formal_status && (
             <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
-              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Formal Status</span>
+              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Vendor Formal Status</span>
               <div className="mt-3 space-y-3">
                 <div className="flex items-center gap-3">
                   <span className="text-sm text-slate-600">Savings Account:</span>
@@ -899,10 +972,33 @@ export default function Page() {
             </div>
           )}
 
-          {/* hr divider before details (Phase 3 P3-ST3) */}
+          {/* 14. LOCATION VERIFICATION */}
+          {report.location_verification && (
+            <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
+              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Location Verification</span>
+              <div className="mt-2">
+                {report.location_verification.location_found ? (
+                  <div>
+                    <p className="text-sm text-emerald-700 flex items-center gap-1.5">
+                      <span className="w-2 h-2 bg-emerald-500 rounded-full" />
+                      Address verified against public map records
+                    </p>
+                    {report.location_verification.address && <p className="mt-1 text-xs text-slate-400">{report.location_verification.address}</p>}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500">
+                    Address could not be verified against public records
+                    {report.location_verification.error && <span className="text-xs text-slate-400"> ({report.location_verification.error})</span>}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* hr divider */}
           <hr className="border-0 border-t border-gray-200 my-2" />
 
-          {/* Card 11 — Basic Information collapsible (Phase 2 P2-ST5) */}
+          {/* Collapsible: Scheme Note, Evidence Summary, Assessment History, Evidence Completeness */}
           <button
             type="button"
             onClick={() => setShowDetails(s => !s)}
@@ -913,58 +1009,29 @@ export default function Page() {
 
           <div className={`${showDetails ? "block" : "hidden"} print-show space-y-4`}>
 
-            {/* Business type */}
+            {/* 15. SCHEME NOTE + Sources */}
             <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
-              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Business Type</span>
-              <p className="mt-1 text-lg font-semibold text-slate-900">{report.business_type ?? "Not specified"}</p>
+              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Scheme Note</span>
+              <p className="mt-2 text-sm text-slate-700 leading-relaxed">{report.relevant_scheme_note}</p>
+              {(Array.isArray(report.sources_cited) ? report.sources_cited : []).length > 0 && (
+                <p className="mt-3 text-[11px] text-slate-400">Sources referenced: {(report.sources_cited ?? []).join(", ")}</p>
+              )}
             </div>
 
-            {/* Profile Completeness */}
-            {report.profile_completeness && (
-              <div className="report-card bg-indigo-50 rounded-xl border border-indigo-200 p-4 md:p-6">
-                <span className="text-xs font-semibold text-indigo-500 uppercase tracking-wide">Profile Completeness Index</span>
-                <p className="text-[10px] text-indigo-400 mt-0.5">Reflects evidence gathered, not creditworthiness</p>
-                <div className="mt-3 flex items-center gap-4">
-                  <span className="text-3xl font-bold text-indigo-900">{report.profile_completeness.completeness_tier}</span>
-                </div>
-                <div className="mt-2 h-2.5 rounded-full bg-indigo-100 overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-indigo-500 to-indigo-400 rounded-full transition-all duration-500"
-                    style={{ width: `${report.profile_completeness.completeness_score}%` }}
-                  />
-                </div>
-                {Array.isArray(report.profile_completeness.missing_for_next_tier) && report.profile_completeness.missing_for_next_tier.length > 0 && (
-                  <ul className="mt-3 space-y-1">
-                    {report.profile_completeness.missing_for_next_tier.map((item, i) => (
-                      <li key={i} className="text-xs text-indigo-700 flex gap-1.5">
-                        <span className="text-indigo-400 mt-0.5 shrink-0">•</span>
-                        <span>{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
+            {/* 16. EVIDENCE SUMMARY */}
+            <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
+              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Evidence Summary</span>
+              <ul className="mt-2 space-y-1">
+                {(Array.isArray(report.evidence_summary) ? report.evidence_summary : []).map((s, i) => (
+                  <li key={i} className="text-sm text-slate-700 flex gap-2">
+                    <span className="text-slate-300 mt-0.5 shrink-0">•</span>
+                    <span>{s}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
 
-            {/* Evidence completeness dots */}
-            {ec && (
-              <div className="report-card bg-slate-50 rounded-xl border border-slate-200 p-3 md:p-5">
-                <div className="flex items-center gap-3">
-                  <div className="flex gap-1">
-                    {Array.from({ length: ec.sources_total }, (_, i) => (
-                      <span key={i} className={`w-3 h-3 rounded-full border-2 ${i < ec.sources_provided ? "bg-indigo-500 border-indigo-500" : "bg-white border-slate-300"}`} />
-                    ))}
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-slate-700">{ec.sources_provided} of {ec.sources_total} evidence sources provided</p>
-                    <p className="text-xs text-slate-500">{ec.discrepancies_found ? "Discrepancies flagged — see above" : "No discrepancies found"}</p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">Reflects how much evidence was available, not business quality.</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Vendor history */}
+            {/* 17. ASSESSMENT HISTORY */}
             {vendorHistory && vendorHistory.length > 0 && report.vendor_name && (
               <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
                 <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Assessment History for {report.vendor_name}</span>
@@ -989,106 +1056,23 @@ export default function Page() {
               </div>
             )}
 
-            {/* Location Verification */}
-            {report.location_verification && (
-              <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
-                <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Location Verification</span>
-                <div className="mt-2">
-                  {report.location_verification.location_found ? (
-                    <div>
-                      <p className="text-sm text-emerald-700 flex items-center gap-1.5">
-                        <span className="w-2 h-2 bg-emerald-500 rounded-full" />
-                        Address verified against public map records
-                      </p>
-                      {report.location_verification.address && <p className="mt-1 text-xs text-slate-400">{report.location_verification.address}</p>}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-slate-500">
-                      Address could not be verified against public records
-                      {report.location_verification.error && <span className="text-xs text-slate-400"> ({report.location_verification.error})</span>}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Cross-verification matrix */}
-            {report.source_agreement && (
-              <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 px-4 pt-4 pb-3 md:px-6 md:pt-6">
-                <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Cross-Verification</span>
-                <div className="mt-3 flex flex-col items-center select-none">
-                  <div className="flex items-center gap-0 w-full max-w-xs">
-                    <div className="flex-1 text-center">
-                      <div className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700">
-                        <span className="text-base">📷</span> Photo
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 px-1">
-                      <div className={`w-10 h-0.5 ${report.source_agreement.photo_voice === "agree" ? "bg-green-400" : report.source_agreement.photo_voice === "conflict" ? "bg-amber-400" : "bg-slate-200"}`} />
-                      <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${AGREEMENT_COLORS[report.source_agreement.photo_voice || "insufficient_data"] || AGREEMENT_COLORS.insufficient_data}`}>
-                        {report.source_agreement.photo_voice === "agree" ? "✓" : report.source_agreement.photo_voice === "conflict" ? "⚠" : "—"}
-                      </span>
-                      <div className={`w-10 h-0.5 ${report.source_agreement.photo_voice === "agree" ? "bg-green-400" : report.source_agreement.photo_voice === "conflict" ? "bg-amber-400" : "bg-slate-200"}`} />
-                    </div>
-                    <div className="flex-1 text-center">
-                      <div className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700">
-                        <span className="text-base">🎙️</span> Voice
-                      </div>
-                    </div>
+            {/* Evidence completeness dots */}
+            {ec && (
+              <div className="report-card bg-slate-50 rounded-xl border border-slate-200 p-3 md:p-5">
+                <div className="flex items-center gap-3">
+                  <div className="flex gap-1">
+                    {Array.from({ length: ec.sources_total }, (_, i) => (
+                      <span key={i} className={`w-3 h-3 rounded-full border-2 ${i < ec.sources_provided ? "bg-indigo-500 border-indigo-500" : "bg-white border-slate-300"}`} />
+                    ))}
                   </div>
-                  <div className="flex justify-between w-full max-w-xs h-6">
-                    <div className="flex flex-col items-center w-1/3">
-                      <div className={`w-0.5 h-3 ${report.source_agreement.photo_transactions === "agree" ? "bg-green-400" : report.source_agreement.photo_transactions === "conflict" ? "bg-amber-400" : "bg-slate-200"}`} />
-                    </div>
-                    <div className="flex flex-col items-center w-1/3">
-                      <div className={`w-0.5 h-3 ${report.source_agreement.voice_transactions === "agree" ? "bg-green-400" : report.source_agreement.voice_transactions === "conflict" ? "bg-amber-400" : "bg-slate-200"}`} />
-                    </div>
-                  </div>
-                  <div className="flex justify-between w-full max-w-xs -mt-0.5">
-                    <div className="flex justify-center w-1/3">
-                      <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${AGREEMENT_COLORS[report.source_agreement.photo_transactions || "insufficient_data"] || AGREEMENT_COLORS.insufficient_data}`}>
-                        {report.source_agreement.photo_transactions === "agree" ? "✓" : report.source_agreement.photo_transactions === "conflict" ? "⚠" : "—"}
-                      </span>
-                    </div>
-                    <div className="flex justify-center w-1/3">
-                      <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${AGREEMENT_COLORS[report.source_agreement.voice_transactions || "insufficient_data"] || AGREEMENT_COLORS.insufficient_data}`}>
-                        {report.source_agreement.voice_transactions === "agree" ? "✓" : report.source_agreement.voice_transactions === "conflict" ? "⚠" : "—"}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="mt-1 flex justify-center w-full max-w-xs">
-                    <div className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700">
-                      <span className="text-base">💰</span> Transactions
-                    </div>
+                  <div>
+                    <p className="text-sm font-medium text-slate-700">{ec.sources_provided} of {ec.sources_total} evidence sources provided</p>
+                    <p className="text-xs text-slate-500">{ec.discrepancies_found ? "Discrepancies flagged — see above" : "No discrepancies found"}</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Reflects how much evidence was available, not business quality.</p>
                   </div>
                 </div>
               </div>
             )}
-
-            {/* hr divider before technical details (Phase 3 P3-ST3) */}
-            <hr className="border-0 border-t border-gray-200 my-2" />
-
-            {/* Scheme note + Sources */}
-            <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
-              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Scheme Note</span>
-              <p className="mt-2 text-sm text-slate-700 leading-relaxed">{report.relevant_scheme_note}</p>
-              {(Array.isArray(report.sources_cited) ? report.sources_cited : []).length > 0 && (
-                <p className="mt-3 text-[11px] text-slate-400">Sources referenced: {(report.sources_cited ?? []).join(", ")}</p>
-              )}
-            </div>
-
-            {/* Evidence summary */}
-            <div className="report-card bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-6">
-              <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Evidence Summary</span>
-              <ul className="mt-2 space-y-1">
-                {(Array.isArray(report.evidence_summary) ? report.evidence_summary : []).map((s, i) => (
-                  <li key={i} className="text-sm text-slate-700 flex gap-2">
-                    <span className="text-slate-300 mt-0.5 shrink-0">•</span>
-                    <span>{s}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
 
             {/* Input errors */}
             {Array.isArray(report.input_errors) && report.input_errors.length > 0 && (
@@ -1114,7 +1098,7 @@ export default function Page() {
               </div>
             )}
 
-            {/* Report ID + footers */}
+            {/* 18. Footer: PII notice + disclaimer */}
             {report.report_id && <p className="text-[11px] font-mono text-slate-400 text-center">Report ID: {report.report_id}</p>}
             <p className="text-[11px] text-slate-400 text-center">🔒 Voice data PII-masked before AI processing (DPDPA 2023)</p>
             <p className="text-[11px] text-slate-300 text-center">This report was generated by an AI pipeline. All outputs should be verified by a field officer before decision-making.</p>
@@ -1539,7 +1523,12 @@ export default function Page() {
               <span className="text-sm text-gray-500">optional</span>
             </div>
             <p className="mt-1 text-sm text-gray-500">Format: date, type (credit/debit), amount</p>
-            <input ref={csvRef} type="file" accept=".csv,.xlsx" onChange={(e) => setCsv(e.target.files?.[0] ?? null)} className="mt-2 block w-full text-sm text-gray-500 file:mr-3 file:py-3 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer" />
+            <input ref={csvRef} type="file" accept=".csv,.xlsx" onChange={(e) => {
+              const f = e.target.files?.[0] ?? null;
+              if (f && f.size > 5 * 1024 * 1024) { setError("CSV too large (max 5MB)"); return; }
+              setError(null);
+              setCsv(f);
+            }} className="mt-2 block w-full text-sm text-gray-500 file:mr-3 file:py-3 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer" />
             {csv && (
               <p className="mt-2 text-xs text-emerald-600 flex items-center gap-1.5">
                 <span className="w-2 h-2 bg-emerald-500 rounded-full" />
@@ -1587,7 +1576,12 @@ export default function Page() {
                   <div key={key} className="border border-slate-200 rounded-xl p-3">
                     <p className="text-sm font-medium text-slate-800">{label}</p>
                     <p className="text-[11px] text-slate-400 mt-0.5">{help}</p>
-                    <input ref={docRefs[key] as any} type="file" accept={accept} onChange={(e) => handleDocuments(key, e.target.files?.[0] ?? null)} className="mt-2 block w-full text-xs text-gray-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer" />
+                    <input ref={docRefs[key] as any} type="file" accept={accept} onChange={(e) => {
+                      const f = e.target.files?.[0] ?? null;
+                      if (f && f.size > 10 * 1024 * 1024) { setError("Document too large (max 10MB)"); return; }
+                      setError(null);
+                      handleDocuments(key, f);
+                    }} className="mt-2 block w-full text-xs text-gray-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer" />
                     {file && (
                       <p className="mt-1.5 text-xs text-emerald-600 flex items-center gap-1 flex-wrap">
                         <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
